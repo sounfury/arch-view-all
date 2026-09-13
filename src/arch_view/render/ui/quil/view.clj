@@ -8,6 +8,8 @@
             [arch-view.render.ui.util.module-hover :as module-hover]
             [arch-view.render.ui.util.quil-lifecycle :as quil-lifecycle]
             [arch-view.render.ui.util.scene-state :as scene-state]
+            [arch-view.render.ui.util.resize :as resize]
+            [arch-view.render.ui.util.text-rendering :as text-rendering]
             [arch-view.render.ui.util.view-bootstrap :as view-bootstrap]
             [arch-view.render.ui.util.viewport :as viewport]
             [arch-view.render.ui.swing.source-window :as source-window]
@@ -282,6 +284,7 @@
 
 (defn- draw-scene
   [{:keys [scene declutter-mode scroll-x scroll-y viewport-height viewport-width zoom] :as state}]
+  (text-rendering/configure-text!)
   (canvas/draw-scene state
                      {:scaled-content-height scaled-content-height
                       :point-in-toolbar? point-in-toolbar?
@@ -309,13 +312,7 @@
                        (>= (- now (:reanalyze-started-at state)) reanalyze-feedback-ms))
                 (reanalyze-state state)
                 state)
-        state (if (and (:architecture state)
-                       (not= (double (or previous-width 0.0))
-                             (double (or (:viewport-width state) 0.0))))
-                (assoc state :scene (build-scene-for-path (:architecture state)
-                                                          (vec (or (:namespace-path state) []))
-                                                          (:viewport-width state)))
-                state)
+        state (resize/resize-scene state previous-width now build-scene-for-path)
         hovered (hovered-dependency-for-state state)
         key (dependency-tooltip-key hovered)]
     (cond
@@ -475,20 +472,44 @@
   [{:keys [namespace-path scroll-x scroll-y nav-stack] :as state}]
   (scene-state/push-nav-state state))
 
+(def ^:private preferred-chinese-fonts
+  ["Microsoft Yahei UI"
+   "Microsoft YaHei"
+   "PingFang SC"
+   "Noto Sans SC"
+   "Noto Sans CJK SC"
+   "WenQuanYi Micro Hei"
+   "SimHei"])
+
+(defn select-chinese-font
+  []
+  (try
+    (let [available (set (processing.core.PFont/list))]
+      (first (filter available preferred-chinese-fonts)))
+    (catch Throwable _ nil)))
+
 (defn show!
   ([scene]
    (show! scene {}))
   ([scene {:keys [title architecture reload-architecture]
            :or {title "architecture-viewer"}}]
+   (text-rendering/configure-ui-scale!)
    (let [effective-architecture (or architecture {:scene scene})
          initial-scene (initial-scene-for-show scene architecture)
          viewport-height (view-bootstrap/viewport-height-for-scene initial-scene content-height-for-scene)
          width (view-bootstrap/viewport-width-for-scene initial-scene content-width-for-scene)]
      (q/sketch
        :title title
+       :renderer :java2d
        :size [width viewport-height]
+       :settings text-rendering/configure-density!
        :features [:resizable]
        :setup (fn []
+                (when-let [font-name (select-chinese-font)]
+                  (try
+                    (let [font (q/create-font font-name 12 true)]
+                      (q/text-font font))
+                    (catch Throwable _)))
                 (view-bootstrap/initial-sketch-state {:scene initial-scene
                                                       :architecture effective-architecture
                                                       :reload-architecture reload-architecture

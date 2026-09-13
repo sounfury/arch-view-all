@@ -72,14 +72,18 @@
     (let [base-y (+ 28.0
                     (apply max 0.0 (map (fn [{:keys [y height]}] (+ y height)) (:layer-rects scene))))
           title-y base-y
+          subtitle-y (+ title-y 18.0)
+          items-start-y (+ subtitle-y 20.0)
           line-height 16.0]
       (q/no-stroke)
       (q/text-align :left :top)
-      (q/fill 120 0 0)
-      (q/text "Cycles:" 20.0 title-y)
+      (q/fill 160 0 0)
+      (q/text "循环依赖警告 (Cycles):" 20.0 title-y)
+      (q/fill 110 40 40)
+      (q/text "检测到以下模块间存在闭环引用，违反分层无环设计原则：" 20.0 subtitle-y)
       (doseq [[idx line] (map-indexed vector (:cycle-lines scene))]
-        (q/fill 150 0 0)
-        (q/text line 20.0 (+ title-y 20.0 (* idx line-height)))))))
+        (q/fill 180 0 0)
+        (q/text (str "• " line) 24.0 (+ items-start-y (* idx line-height)))))))
 
 (defn draw-toolbar
   [{:keys [namespace-path nav-stack reload-architecture] :as state}

@@ -7,10 +7,10 @@
     (let [scene {:layer-rects [{:x 10.0 :y 20.0 :width 100.0 :height 60.0}
                                {:x 160.0 :y 120.0 :width 80.0 :height 50.0}]
                  :cycle-lines ["a->b->a" "c->d->c"]}]
-      (should= 314.0 (sut/content-height-for-scene scene))
-      (should= 500.0 (sut/content-width-for-scene scene 240.0))
-      (should= 628.0 (sut/scaled-content-height scene 2.0))
-      (should= 260.0 (sut/scaled-content-width scene 0.5 260.0))))
+      (should= 332.0 (sut/content-height-for-scene scene))
+      (should= 660.0 (sut/content-width-for-scene scene 240.0))
+      (should= 664.0 (sut/scaled-content-height scene 2.0))
+      (should= 340.0 (sut/scaled-content-width scene 0.5 260.0))))
 
   (it "maps thumb positions and point containment"
     (let [rect {:x 100.0 :y 200.0 :width 20.0 :height 10.0}]

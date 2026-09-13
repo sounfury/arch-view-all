@@ -163,8 +163,9 @@
          []
          {:rendered-label (fn [m] (:display-label m))
           :draw-dependency-indicators (fn [_])}))
-      (should= true (some #(= ["Cycles:" 20.0 98.0] %) @text-calls))
-      (should= true (some #(= ["a->b->a" 20.0 118.0] %) @text-calls))))
+      (should= true (some #(= ["循环依赖警告 (Cycles):" 20.0 98.0] %) @text-calls))
+      (should= true (some #(= ["检测到以下模块间存在闭环引用，违反分层无环设计原则：" 20.0 116.0] %) @text-calls))
+      (should= true (some #(= ["• a->b->a" 24.0 136.0] %) @text-calls))))
 
   (it "draw-scene-content falls back to rendered-label when line splitter is absent"
     (let [text-calls (atom [])]

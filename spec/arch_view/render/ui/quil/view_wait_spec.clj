@@ -116,10 +116,11 @@
         (should= nil (:reanalyze-status state))
         (should= nil (:reanalyze-started-at state)))))
 
-  (it "rebuilds the current scene when the viewport width changes"
+  (it "rebuilds the current scene after the viewport width settles"
     (let [built (atom nil)]
       (with-redefs [quil.core/width (fn [] 1600.0)
                     quil.core/height (fn [] 900.0)
+                    sut/current-time-ms (fn [] 1000)
                     sut/view-architecture (fn [_ path] {:path path})
                     sut/build-scene (fn [view opts]
                                       (reset! built {:view view :opts opts})
@@ -136,5 +137,8 @@
                                        :dependency-tooltip-key nil
                                        :dependency-tooltip-scroll 0.0})]
           (should= 1600.0 (:viewport-width state))
+          (should= nil @built)
+          (with-redefs [sut/current-time-ms (fn [] 1200)]
+            (sut/update-state state))
           (should= {:path ["alpha"]} (:view @built))
           (should= {:canvas-width 1572.0} (:opts @built))))))

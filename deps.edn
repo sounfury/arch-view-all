@@ -1,6 +1,13 @@
 {:paths ["src"]
  :deps {org.clojure/clojure {:mvn/version "1.11.1"}
-        quil/quil {:mvn/version "4.3.1563"}}
+        ;; Must precede Quil: its jar also bundles the old Processing classes.
+        ;; 4.2.3's synchronized AWT render deadlocks during Windows resizing.
+        org.processing/core {:mvn/version "4.4.1"
+                             ;; The viewer uses Java2D, not the OpenGL renderers.
+                             :exclusions [org.jogamp.gluegen/gluegen-rt
+                                          org.jogamp.jogl/jogl-all]}
+        quil/quil {:mvn/version "4.3.1563"
+                   :exclusions [quil/processing-core]}}
  :aliases
  {:spec-structure-check {:extra-deps {io.github.unclebob/speclj-structure-check
                                       {:git/url "https://github.com/unclebob/speclj-structure-check"
@@ -18,6 +25,8 @@
                      speclj/speclj {:mvn/version "3.10.0"}}
         :main-opts ["-m" "speclj.cloverage" "--" "-p" "src" "-s" "spec" "--lcov"]}
   :run {:main-opts ["-m" "arch-view.core"]}
+  :smoke-ui {:extra-paths ["dev"]
+             :main-opts ["-m" "arch-view.ui-smoke"]}
   :mutate {:extra-deps {io.github.unclebob/clj-mutate
                         {:git/url "https://github.com/unclebob/clj-mutate"
                          :git/sha "1540a75fa66f1a03f1d31e4d0ef00843b7c2e7bf"}}

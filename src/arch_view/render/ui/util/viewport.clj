@@ -80,6 +80,7 @@
 
 (def ^:private cycle-list-line-height 16.0)
 (def ^:private cycle-list-top-gap 28.0)
+(def ^:private cycle-list-header-height 38.0)
 (def ^:private cycle-list-bottom-gap 24.0)
 
 (defn- cycle-list-height
@@ -88,7 +89,7 @@
     (if (zero? cycle-count)
       0.0
       (+ cycle-list-top-gap
-         20.0
+         cycle-list-header-height
          (* cycle-list-line-height cycle-count)
          cycle-list-bottom-gap))))
 
@@ -113,7 +114,7 @@
         cycle-width (if (seq (:cycle-lines scene))
                       (+ racetrack-margin
                          20.0
-                         (* 7.0 (apply max (map count (:cycle-lines scene)))))
+                         (max 400.0 (* 7.0 (apply max (map count (:cycle-lines scene))))))
                       0.0)]
     (max (+ rect-width racetrack-margin 20.0)
          cycle-width)))
