@@ -4,10 +4,11 @@
             [arch-view.layout.layers :as layers]))
 
 (def ^:private mixed-leaf-suffix "|file")
+(def ^:dynamic *namespace-root-depth* 1)
 
 (defn namespace-segments
   [module]
-  (vec (rest (str/split module #"\."))))
+  (vec (drop *namespace-root-depth* (str/split module #"\."))))
 
 (defn source-filename
   [path]
@@ -293,7 +294,7 @@
           {}
           classified))
 
-(defn view-architecture
+(defn- project-architecture
   [architecture namespace-path]
   (let [all-modules (or (get-in architecture [:graph :nodes]) #{})
         module->source-file-all (or (get-in architecture [:graph :module->source-file]) {})
@@ -341,3 +342,8 @@
      :module->display-label module->display-label
      :module->full-name module->full-name
      :cycle-lines cycle-lines}))
+
+(defn view-architecture
+  [architecture namespace-path]
+  (binding [*namespace-root-depth* (get-in architecture [:guidance :namespace-root-depth] 1)]
+    (project-architecture architecture namespace-path)))

@@ -60,17 +60,18 @@
   (str/replace (or line "") "\t" "  "))
 
 (defn source-lines->html
-  [source]
+  ([source] (source-lines->html source colorize-clojure-html))
+  ([source colorize]
   (let [lines (str/split (or source "") #"\r?\n" -1)]
     (->> lines
          (map-indexed (fn [idx line]
-                        (let [line-html (colorize-clojure-html (expand-tabs line))
+                        (let [line-html (colorize (expand-tabs line))
                               visible-line (if (str/blank? line-html) "&nbsp;" line-html)]
                           (str "<tr>"
                                "<td class='ln'>" (inc idx) "</td>"
                                "<td class='code'><pre>" visible-line "</pre></td>"
                                "</tr>"))))
-         (apply str))))
+         (apply str)))))
 
 (defn source->html
   [title source]
@@ -88,5 +89,7 @@
        ".kw{color:#1d4ed8;}"
        "</style></head><body>"
        "<div class='hdr'>" (html-escape title) "</div>"
-       "<div class='src'><table>" (source-lines->html source) "</table></div>"
+       "<div class='src'><table>" (source-lines->html source
+                                    (if (str/ends-with? (or title "") ".py")
+                                      html-escape colorize-clojure-html)) "</table></div>"
        "</body></html>"))

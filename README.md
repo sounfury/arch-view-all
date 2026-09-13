@@ -1,6 +1,6 @@
 # architecture-viewer
 
-Clojure tool for visualizing a project's architecture as layered namespaces with dependency indicators.
+Clojure tool for visualizing Clojure and Python projects as layered modules with dependency indicators. Java has a reserved adapter directory and is not implemented yet.
 
 ![Empire Top-Level Architecture](images/empire-top-level.svg)
 
@@ -10,6 +10,34 @@ Clojure tool for visualizing a project's architecture as layered namespaces with
 - It reads each file’s `ns` form and extracts `:require` dependencies between project namespaces.
 - From those `from -> to` relationships, it builds a namespace dependency graph.
 - It also records source-file paths per namespace and marks polymorphic namespaces (`defprotocol`, `defmulti`, `definterface`) as abstract.
+
+For Python (`--language python`), the tool uses Python's standard-library AST
+parser without importing or executing the target project. No target dependencies
+need to be installed. Install Python 3.9+ (new enough for the target source syntax)
+and make `python` available on PATH, or set `ARCH_VIEW_PYTHON` to the interpreter's
+executable path.
+
+- Defaults to `src` when that directory exists, otherwise the project root.
+  Use repeated `--source-path` options to select import roots explicitly.
+- Module names come from paths relative to those roots; `pkg/__init__.py` maps
+  to `pkg`. Selecting a package directory itself retains its package name.
+- Resolves `import`, `from ... import`, aliases, multiline imports, relative
+  imports, and imports inside functions or conditional blocks. Only dependencies
+  on scanned modules are retained. `from pkg import child` includes the package
+  initializer (when present) and the child module (when present).
+- Recognizes `abc.ABC`, `ABCMeta`, `abstractmethod`, and `typing.Protocol`
+  (including import aliases) as abstract module indicators.
+- Skips hidden directories, virtual environments (`venv`, `.venv`, `env`),
+  `__pycache__`, `site-packages`, `node_modules`, `build`, and `dist`.
+- Reports syntax errors and ambiguous duplicate module names instead of
+  silently returning a partial graph. Namespace packages without `__init__.py`
+  are supported; they appear as groups rather than source-file nodes.
+- Dynamic imports, runtime `sys.path` changes, and transitive symbol re-exports
+  are not resolved. Conditional imports are included regardless of runtime branch.
+
+Python views preserve top-level modules and packages. Python source files open
+as escaped plain text with line numbers; Clojure highlighting remains available.
+All languages share the graph, layer calculation, cycle analysis, and renderer.
 
 ## Layer Rationale
 
@@ -92,3 +120,32 @@ clj -M:run --project-path /path/to/project
 
 If `--project-path` is omitted, the tool uses the current directory (`.`).
 Use `--no-gui` if you only want the EDN output and not the interactive window.
+
+Analyze a Python project:
+
+```bash
+clj -M:run --language python --project-path /path/to/python-project
+clj -M:run --language python --project-path /path/to/project --source-path backend --no-gui --out architecture.edn
+```
+
+For ZhiYing, `backend` is the Python import root (including its tests):
+
+```powershell
+clj -M:run --language python --project-path D:/projects/ZhiYing --source-path backend
+```
+
+Use `--source-path backend/app` to focus on application code only. Reanalyze
+retains the chosen language and source roots. Omitting `--language` preserves
+the existing Clojure behavior.
+
+## Tests
+
+```bash
+clj -M:check spec/
+clj -M:spec
+python -B -m unittest discover -s spec/python -v
+```
+
+Language adapters live under `src/arch_view/input/{clojure,python,java}` and are
+registered in `arch-view.input.languages`. The original Clojure extraction API
+remains available for existing callers.

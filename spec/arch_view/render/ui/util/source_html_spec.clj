@@ -4,6 +4,13 @@
             [speclj.core :refer :all]))
 
 (describe "source html"
+  (it "renders Python safely without Clojure comment or keyword styling"
+    (let [html (sut/source->html "module.py" "if x < 2: print(x); print('ok') # note")]
+      (should= true (str/includes? html "x &lt; 2:"))
+      (should= true (str/includes? html "; print('ok') # note"))
+      (should= false (str/includes? html "<span class='cmt'>"))
+      (should= false (str/includes? html "<span class='kw'>"))))
+
   (it "escapes html-sensitive characters"
     (should= "&lt;a&amp;b&gt;" (sut/html-escape "<a&b>")))
 

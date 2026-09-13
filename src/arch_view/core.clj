@@ -2,7 +2,7 @@
 (ns arch-view.core
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [arch-view.input.dependency-extract :as extract]
+            [arch-view.input.languages :as languages]
             [arch-view.layout.layers :as layers]
             [arch-view.model.classify :as classify]
             [arch-view.model.components :as components]
@@ -20,15 +20,20 @@
    "Options:\n"
    "  --help                     Print this usage summary and exit.\n"
    "  --project-path <path>      Project root to scan (default: current directory).\n"
+   "  --language <name>          clojure (default) or python.\n"
+   "  --source-path <path>       Source root relative to project; repeat for multiple roots.\n"
    "  --in-edn <file>            Load architecture from an EDN file instead of scanning source.\n"
    "  --out <file>               Write architecture EDN output to file.\n"
    "  --no-gui                   Run headless (do not open the interactive viewer).\n"))
 
 (defn load-architecture
-  [project-path]
-  (let [guidance default-guidance
-        source-paths (or (:source-paths guidance) ["src"])
-        graph (extract/build-module-graph project-path source-paths)
+  ([project-path] (load-architecture project-path {}))
+  ([project-path {:keys [language source-paths]}]
+  (let [language (languages/language-key language)
+        source-paths (or (seq source-paths) (languages/default-source-paths project-path language))
+        guidance (assoc default-guidance :source-paths (vec source-paths) :language language
+                        :namespace-root-depth (if (= :clojure language) 1 0))
+        graph (languages/build-module-graph project-path source-paths language)
         module->component (components/assign-components guidance (:nodes graph))
         layout (layers/assign-layers graph)
         classified-edges (classify/classify-edges guidance graph)
@@ -40,7 +45,7 @@
      :module->component module->component
      :layout layout
      :classified-edges classified-edges
-     :scene scene}))
+     :scene scene})))
 
 (defn load-architecture-edn
   [path]
@@ -57,6 +62,8 @@
                        "--no-gui" (fn [remaining opts]
                                     [(next remaining) (assoc opts :no-gui true)])}
         value-handlers {"--project-path" :project-path
+                        "--language" :language
+                        "--source-path" :source-paths
                         "--in-edn" :in-edn
                         "--out" :out}]
     (loop [remaining args
@@ -68,8 +75,15 @@
             (let [[next-remaining next-opts] (handle-flag remaining opts)]
               (recur next-remaining next-opts))
             (if-let [key-name (get value-handlers arg)]
-              (recur (nnext remaining)
-                     (assoc opts key-name (second remaining)))
+              (let [value (second remaining)]
+                (when (or (nil? value) (str/starts-with? value "--"))
+                  (throw (ex-info (str "Missing value for " arg) {:option arg})))
+                (recur (nnext remaining)
+                       (if (= key-name :source-paths)
+                         (update opts key-name (fnil conj []) value)
+                         (assoc opts key-name (if (= key-name :language)
+                                                (languages/language-key value)
+                                                value)))))
               (recur (next remaining) opts))))))))
 
 (defn exit-program!
@@ -78,12 +92,12 @@
   (System/exit 0))
 
 (defn -main [& args]
-  (let [{:keys [project-path in-edn no-gui out help]} (parse-args args)]
+  (let [{:keys [project-path in-edn no-gui out help] :as opts} (parse-args args)]
     (if help
       (println (usage-summary))
       (let [architecture (if in-edn
                            (load-architecture-edn in-edn)
-                           (load-architecture project-path))
+                           (load-architecture project-path opts))
             source-label (or in-edn project-path)
             {:keys [graph scene]} architecture]
         (println "Architecture loaded")
@@ -96,6 +110,6 @@
                                    :architecture architecture
                                    :reload-architecture (when-not in-edn
                                                           (fn []
-                                                            (load-architecture project-path)))})
+                                                            (load-architecture project-path opts)))})
               (render/wait-until-closed!))
           (exit-program!))))))

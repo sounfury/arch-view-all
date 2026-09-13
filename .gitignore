@@ -1,3 +1,5 @@
 .cpcache/
 target/
 examples/
+__pycache__/
+*.pyc
