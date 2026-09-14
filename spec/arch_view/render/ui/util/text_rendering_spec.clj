@@ -14,6 +14,12 @@
     (let [method (.getDeclaredMethod PSurfaceAWT "render" (make-array Class 0))]
       (should= false (Modifier/isSynchronized (.getModifiers method)))))
 
+  (it "overrides the animation thread so missing AWT buffers cannot kill drawing"
+    (let [thread-class (Class/forName "processing.awt.PSurfaceAWT$9")
+          location (-> thread-class .getProtectionDomain .getCodeSource .getLocation str)]
+      (should-not-be-nil (.getDeclaredMethod thread-class "callDraw" (make-array Class 0)))
+      (should= true (.contains location "classes"))))
+
   (it "allocates high resolution backing pixels even at Windows 125 percent scale"
     (doseq [[scale density] [[1.0 1] [1.25 2] [1.5 2] [2.0 2]]]
       (let [sketch (PApplet.)]
@@ -36,3 +42,19 @@
             (should= RenderingHints/VALUE_FRACTIONALMETRICS_OFF
                      (.getRenderingHint g2 RenderingHints/KEY_FRACTIONALMETRICS))
             (finally (.dispose g2))))))))
+
+(describe "CJK font selection"
+  (it "matches Processing face names to family preferences"
+    (should= "PingFangSC-Regular"
+             (sut/choose-cjk-font ["PingFang SC" "SansSerif"]
+                                  ["Arial" "PingFangSC-Regular" "SansSerif"])))
+
+  (it "uses an exact available family name"
+    (should= "Microsoft YaHei"
+             (sut/choose-cjk-font ["Microsoft YaHei" "SimHei"]
+                                  ["Microsoft YaHei" "Arial"])))
+
+  (it "falls back to SansSerif when no CJK font is installed"
+    (should= "SansSerif"
+             (sut/choose-cjk-font ["PingFang SC" "Microsoft YaHei" "SansSerif"]
+                                  ["Arial" "SansSerif"]))))

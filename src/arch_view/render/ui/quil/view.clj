@@ -472,26 +472,10 @@
   [{:keys [namespace-path scroll-x scroll-y nav-stack] :as state}]
   (scene-state/push-nav-state state))
 
-(def ^:private preferred-chinese-fonts
-  ["Microsoft Yahei UI"
-   "Microsoft YaHei"
-   "PingFang SC"
-   "Noto Sans SC"
-   "Noto Sans CJK SC"
-   "WenQuanYi Micro Hei"
-   "SimHei"])
-
-(defn select-chinese-font
-  []
-  (try
-    (let [available (set (processing.core.PFont/list))]
-      (first (filter available preferred-chinese-fonts)))
-    (catch Throwable _ nil)))
-
 (defn show!
   ([scene]
    (show! scene {}))
-  ([scene {:keys [title architecture reload-architecture]
+  ([scene {:keys [title architecture reload-architecture zoom]
            :or {title "architecture-viewer"}}]
    (text-rendering/configure-ui-scale!)
    (let [effective-architecture (or architecture {:scene scene})
@@ -505,12 +489,13 @@
        :settings text-rendering/configure-density!
        :features [:resizable]
        :setup (fn []
-                (when-let [font-name (select-chinese-font)]
+                (when-let [font-name (text-rendering/select-chinese-font)]
                   (try
                     (let [font (q/create-font font-name 12 true)]
                       (q/text-font font))
                     (catch Throwable _)))
                 (view-bootstrap/initial-sketch-state {:scene initial-scene
+                                                      :zoom zoom
                                                       :architecture effective-architecture
                                                       :reload-architecture reload-architecture
                                                       :has-architecture? (boolean architecture)

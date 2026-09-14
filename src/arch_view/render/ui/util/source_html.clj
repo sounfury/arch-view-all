@@ -75,9 +75,11 @@
 
 (defn source->html
   [title source]
-  (str "<html><head><style>"
-       "body{margin:0;padding:0;background:#f8fafc;color:#111827;font-family:Menlo,Monaco,Consolas,monospace;}"
-       ".hdr{padding:10px 12px;background:#e5e7eb;border-bottom:1px solid #cbd5e1;font-family:sans-serif;font-size:13px;}"
+  (str "<html><head><meta charset='UTF-8'><style>"
+       "body{margin:0;padding:0;background:#f8fafc;color:#111827;"
+       "font-family:Menlo,Monaco,Consolas,'PingFang SC','Microsoft YaHei','Hiragino Sans GB',monospace;}"
+       ".hdr{padding:10px 12px;background:#e5e7eb;border-bottom:1px solid #cbd5e1;"
+       "font-family:sans-serif,'PingFang SC','Microsoft YaHei','Hiragino Sans GB';font-size:13px;}"
        ".src{padding:0;line-height:1.35;font-size:13px;}"
        ".src table{border-collapse:collapse;width:100%;}"
        ".ln{width:52px;padding:0 10px;background:#eef2f7;color:#6b7280;text-align:right;vertical-align:top;"
@@ -90,6 +92,6 @@
        "</style></head><body>"
        "<div class='hdr'>" (html-escape title) "</div>"
        "<div class='src'><table>" (source-lines->html source
-                                    (if (str/ends-with? (or title "") ".py")
+                                    (if (some #(str/ends-with? (or title "") %) [".py" ".java"])
                                       html-escape colorize-clojure-html)) "</table></div>"
        "</body></html>"))

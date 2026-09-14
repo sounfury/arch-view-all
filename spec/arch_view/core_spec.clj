@@ -187,3 +187,56 @@
                     sut/exit-program! (fn [] nil)]
         (sut/-main "--in-edn" (.getAbsolutePath in-file)))
       (should= nil @reload*)))
+
+(describe "Java CLI integration"
+  (it "Given Java CLI options, when parsed, then retains language and repeated roots"
+    (should= {:language :java :source-paths ["api/src/main/java" "app/src/main/java"]}
+             (select-keys (sut/parse-args ["--language" "java"
+                                          "--source-path" "api/src/main/java"
+                                          "--source-path" "app/src/main/java"])
+                          [:language :source-paths])))
+
+  (it "Given a Java project, when exported and reloaded, then preserves its graph and source links"
+    (let [root (.toFile (java.nio.file.Files/createTempDirectory
+                         "arch-view-java-cli" (make-array java.nio.file.attribute.FileAttribute 0)))
+          src (doto (java.io.File. root "src/main/java/demo") .mkdirs)
+          out (java.io.File. root "architecture.edn")]
+      (try
+        (spit (java.io.File. src "Port.java") "package demo; public interface Port {}")
+        (spit (java.io.File. src "App.java") "package demo; class App implements Port {}")
+        (with-redefs [sut/exit-program! (fn [])]
+          (sut/-main "--language" "java" "--project-path" (.getAbsolutePath root)
+                     "--no-gui" "--out" (.getAbsolutePath out)))
+        (let [architecture (sut/load-architecture-edn (.getAbsolutePath out))]
+          (should= :java (get-in architecture [:guidance :language]))
+          (should= ["src/main/java"] (get-in architecture [:guidance :source-paths]))
+          (should= #{"demo.App" "demo.Port"} (get-in architecture [:graph :nodes]))
+          (should= #{{:from "demo.App" :to "demo.Port"}} (get-in architecture [:graph :edges]))
+          (should= #{"demo.Port"} (get-in architecture [:graph :abstract-modules]))
+          (should= (.getCanonicalPath (java.io.File. src "App.java"))
+                   (get-in architecture [:graph :module->source-file "demo.App"]))
+          (should= 2 (count (get-in architecture [:layout :module->layer]))))
+        (should= nil (some #(.endsWith (.getName %) ".class") (file-seq root)))
+        (finally (doseq [file (reverse (file-seq root))] (.delete file)))))))
+
+(describe "automatic multi-module Java loading"
+  (it "discovers modules and preserves cross-module edges without CLI overrides"
+    (let [root (.toFile (java.nio.file.Files/createTempDirectory
+                         "arch-auto-java" (make-array java.nio.file.attribute.FileAttribute 0)))]
+      (try
+        (doseq [[path code] [["app/api/src/main/java/demo/Port.java" "package demo; public interface Port {}"]
+                            ["app/web/src/main/java/demo/App.java" "package demo; class App implements Port {}"]
+                            ["app/web/src/test/java/demo/App.java" "package demo; class App {}"]]]
+          (let [file (java.io.File. root path)]
+            (.mkdirs (.getParentFile file))
+            (spit file code)))
+        (let [architecture (sut/load-architecture (str root))]
+          (should= :java (get-in architecture [:guidance :language]))
+          (should= ["app/api/src/main/java" "app/web/src/main/java"]
+                   (get-in architecture [:guidance :source-paths]))
+          (should= #{"demo.Port" "demo.App"} (get-in architecture [:graph :nodes]))
+          (should= #{{:from "demo.App" :to "demo.Port"}} (get-in architecture [:graph :edges])))
+        (should= #{"demo.Port"}
+                 (get-in (sut/load-architecture (str root) {:source-paths ["app/api/src/main/java"]})
+                         [:graph :nodes]))
+        (finally (doseq [file (reverse (file-seq root))] (.delete file)))))))

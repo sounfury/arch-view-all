@@ -1,9 +1,10 @@
 (ns arch-view.render.ui.util.text-rendering
-  (:require [quil.core :as q]
+  (:require [clojure.string :as str]
+            [quil.core :as q]
             [quil.applet :as applet])
   (:import [java.awt GraphicsEnvironment RenderingHints]
            [processing.awt PGraphicsJava2D]
-           [processing.core PApplet]))
+           [processing.core PApplet PFont]))
 
 (defn configure-ui-scale!
   "Set the Windows default before AWT initializes; explicit JVM options win."
@@ -40,3 +41,53 @@
                            RenderingHints/VALUE_TEXT_ANTIALIAS_GASP)
         (.setRenderingHint g2 RenderingHints/KEY_FRACTIONALMETRICS
                            RenderingHints/VALUE_FRACTIONALMETRICS_OFF)))))
+
+(def preferred-cjk-fonts
+  ;; PFont/list returns Font.getName() (PingFangSC-Regular), not the
+  ;; AWT family (PingFang SC). Keep both so either source can match.
+  ["PingFangSC-Regular"
+   "PingFang SC"
+   "Microsoft YaHei UI"
+   "Microsoft Yahei UI"
+   "Microsoft YaHei"
+   "HiraginoSansGB-W3"
+   "Hiragino Sans GB"
+   "STHeiti"
+   "Heiti SC"
+   "Noto Sans CJK SC"
+   "Noto Sans SC"
+   "WenQuanYi Micro Hei"
+   "SimHei"
+   "SansSerif"])
+
+(defn- normalize-font-name [s]
+  (-> (str s)
+      str/lower-case
+      (str/replace #"[^a-z0-9]" "")))
+
+(defn choose-cjk-font
+  "Return the first preferred font that exists in available names.
+  Available may mix PFont face names and AWT family names."
+  [preferred available]
+  (let [available (vec available)
+        exact (set available)
+        by-norm (reduce (fn [idx name]
+                          (let [k (normalize-font-name name)]
+                            (if (contains? idx k) idx (assoc idx k name))))
+                        {} available)]
+    (some (fn [want]
+            (let [want-n (normalize-font-name want)]
+              (or (when (exact want) want)
+                  (get by-norm want-n)
+                  (first (filter #(str/starts-with? (normalize-font-name %) want-n)
+                                 available)))))
+          preferred)))
+
+(defn select-chinese-font
+  []
+  (try
+    (choose-cjk-font preferred-cjk-fonts
+                     (concat (seq (PFont/list))
+                             (seq (.getAvailableFontFamilyNames
+                                    (GraphicsEnvironment/getLocalGraphicsEnvironment)))))
+    (catch Throwable _ nil)))

@@ -4,6 +4,11 @@
             [speclj.core :refer :all]))
 
 (describe "source html"
+  (it "Given Java source, when displayed, then preserves semicolons and escapes generics"
+    (let [html (sut/source->html "App.java" "List<String> x; int y = 1; // comment")]
+      (should= true (str/includes? html "List&lt;String&gt; x; int y = 1; // comment"))
+      (should= false (str/includes? html "<span class='cmt'>"))))
+
   (it "renders Python safely without Clojure comment or keyword styling"
     (let [html (sut/source->html "module.py" "if x < 2: print(x); print('ok') # note")]
       (should= true (str/includes? html "x &lt; 2:"))
@@ -40,7 +45,9 @@
           doc (sut/source->html "demo" "\t:ok\n")]
       (should= true (str/includes? lines "class='ln'>1</td>"))
       (should= true (str/includes? lines "<pre>  <span class='kw'>:ok</span></pre>"))
-      (should= true (str/includes? doc "<div class='hdr'>demo</div>"))))
+      (should= true (str/includes? doc "<div class='hdr'>demo</div>"))
+      (should= true (str/includes? doc "charset='UTF-8'"))
+      (should= true (str/includes? doc "PingFang SC"))))
 
   (it "handles nil inputs for line rendering and escaping paths"
     (let [escaped (sut/colorize-clojure-html nil)

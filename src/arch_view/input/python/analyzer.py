@@ -11,20 +11,30 @@ EXCLUDED = {"__pycache__", "node_modules", "venv", ".venv", "env",
             "build", "dist", "site-packages"}
 
 
-def discover(project, source_paths):
+TEST_DIRECTORIES = {"test", "tests"}
+
+
+def is_test_file(name):
+    return name.startswith("test_") or name.endswith("_test.py") or name in {"test.py", "conftest.py"}
+
+
+def discover(project, source_paths, include_tests=False):
     modules = {}
     for source in source_paths:
         root = (Path(project) / source).resolve()
         if not root.is_dir():
             raise ValueError(f"Source directory does not exist: {root}")
+        if not include_tests and any(part in TEST_DIRECTORIES for part in Path(source).parts):
+            continue
         # A selected package directory retains its own import name.
         base = root.parent if (root / "__init__.py").is_file() else root
         for directory, dirs, files in os.walk(root, followlinks=False):
             dirs[:] = sorted(d for d in dirs if d not in EXCLUDED
+                             and (include_tests or d not in TEST_DIRECTORIES)
                              and not d.startswith(".")
                              and not Path(directory, d).is_symlink())
             for filename in sorted(files):
-                if not filename.endswith(".py"):
+                if not filename.endswith(".py") or (not include_tests and is_test_file(filename)):
                     continue
                 path = Path(directory, filename)
                 parts = list(path.relative_to(base).with_suffix("").parts)
@@ -106,8 +116,8 @@ def is_abstract(tree):
     return False
 
 
-def analyze(project, source_paths):
-    modules = discover(project, source_paths)
+def analyze(project, source_paths, include_tests=False):
+    modules = discover(project, source_paths, include_tests)
     edges, abstract = set(), []
     for module, path in sorted(modules.items()):
         with tokenize.open(path) as source:
@@ -134,7 +144,9 @@ if __name__ == "__main__":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
-        print(edn(analyze(sys.argv[1], sys.argv[2:])))
+        arguments = sys.argv[2:]
+        include_tests = "--include-tests" in arguments
+        print(edn(analyze(sys.argv[1], [a for a in arguments if a != "--include-tests"], include_tests)))
     except (OSError, SyntaxError, ValueError) as error:
         print(f"Python analysis failed: {error}", file=sys.stderr)
         sys.exit(1)

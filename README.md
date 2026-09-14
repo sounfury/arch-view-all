@@ -1,6 +1,6 @@
 # architecture-viewer (架构可视化工具)
 
-Clojure 开发的代码架构可视化工具，用于将 Clojure 与 Python 项目可视化为清晰的分层模块与依赖指示图。（已预留 Java 适配器扩展目录，目前尚未实现）。
+Clojure 开发的代码架构可视化工具，用于将 Clojure、Python 与 Java 项目可视化为清晰的分层模块与依赖指示图。
 
 ![Empire 顶层架构示意图](images/empire-top-level.svg)
 
@@ -10,7 +10,7 @@ Clojure 开发的代码架构可视化工具，用于将 Clojure 与 Python 项�
 - [多语言适配架构](#多语言适配架构)
   - [Clojure 适配器](#clojure-适配器)
   - [Python 适配器](#python-适配器)
-  - [Java 适配器（规划中）](#java-适配器规划中)
+  - [Java 适配器](#java-适配器)
   - [通用流水线](#通用流水线)
 - [分层原理](#分层原理)
 - [视觉图例](#视觉图例)
@@ -36,7 +36,7 @@ src/arch_view/input/
 │   ├── analyzer.py                # 基于 Python 标准库的 AST 依赖分析器
 │   └── dependency_extract.clj     # Python 依赖提取桥接
 └── java/
-    └── README.md                  # Java 适配器（规划与预留接口）
+    └── dependency_extract.clj     # JDK 编译器 AST 依赖解析
 ```
 
 ### Clojure 适配器
@@ -66,8 +66,17 @@ src/arch_view/input/
 - **源码安全展示**：
   - Python 源文件在内置查看器中以转义纯文本与行号形式展示，避免特殊字符导致渲染异常，同时完整保留 Clojure 高亮能力。
 
-### Java 适配器（规划中）
-- 适配器目录已就位（`src/arch_view/input/java/`），预留给未来通过字节码分析或 Java AST 解析器实现 Java 架构视图扩展。
+### Java 适配器
+
+使用 `--language java`：
+- **环境要求**：使用完整 JDK 启动查看器，源码语法版本须由该 JDK 支持（例如 record 需要 JDK 16+）。无需安装额外 Java 解析库。
+- **分析方式**：通过 JDK 编译器 AST 与符号解析识别实际使用的项目内类型；不执行目标代码、不生成 class 文件，禁用注解处理器。
+- **模块粒度**：按 `package` 与顶层类型名生成模块，例如 `com.example.Service`。同文件多个顶层类型分别展示；内部类、局部类及匿名类归属其顶层类型，源码链接指向原文件。
+- **依赖支持**：支持同包引用、普通/通配符导入后的类型使用、静态成员、全限定名、继承、接口实现、泛型、注解及方法引用。未使用的 import 不产生依赖，外部库不作为图节点。
+- **抽象识别**：接口、注解类型与 abstract 顶层类标记为抽象模块。
+- **扫描路径**：递归发现项目及所有嵌套模块的 `src/main/java`，统一分析跨模块依赖；没有标准源码目录时回退到 `src`、项目根目录。发现标准目录时不包含 `src/test/java`。可用 `--source-path` 覆盖自动发现结果，指定非标准目录或测试目录。
+- **过滤与诊断**：忽略隐藏目录及 `target`、`build`、`out`、`dist`、`node_modules`；`module-info.java` 和 `package-info.java` 不作为类型节点。语法错误与重复全限定类型名会明确报错。
+- **分析边界**：无需安装目标项目的第三方依赖；缺失依赖时仍尽量解析内部引用，但涉及外部继承、生成代码或无法解析的符号可能缺少边。不读取 Maven/Gradle 构建配置、不执行 Lombok 等代码生成器；动态反射依赖不在静态分析范围内。
 
 ### 通用流水线
 无论使用何种语言适配器，最终都输出统一的模块依赖图，无缝接入通用的**分层排版（Layering）**、**循环依赖分析（Cycle Detection）**与**交互式渲染（Interactive GUI Renderer）**模块。
@@ -139,19 +148,54 @@ clj -M:arch-view --project-path .
 
 ## 运行指南
 
+### .env 默认配置
+
+将仓库中的 `.env.example` 复制为启动目录下的 `.env`，即可保存常用参数。也可使用 `--env-file /path/to/custom.env` 指定文件。相对项目路径和输出路径均相对于启动目录，源码路径相对于目标项目。
+
+```dotenv
+ARCH_VIEW_PROJECT_PATH=/Users/sounfury/javaProjects/hdfadvisor
+ARCH_VIEW_LANGUAGE=auto
+ARCH_VIEW_UI_SCALE=1.25
+ARCH_VIEW_ZOOM=1.2
+ARCH_VIEW_INCLUDE_TESTS=false
+ARCH_VIEW_NO_GUI=false
+# ARCH_VIEW_SOURCE_PATHS=src;lib
+# ARCH_VIEW_PYTHON=python3
+# ARCH_VIEW_OUT=architecture.edn
+```
+
+优先级为 **命令行 > 系统环境变量 > 配置文件 > 内置默认值**。配置后可直接运行 `clj -M:run`。`ARCH_VIEW_UI_SCALE` 对应 Java2D 系统缩放（字体与界面一起缩放，具体效果受平台支持影响）；`ARCH_VIEW_ZOOM` 设置架构图及其文字的初始缩放，跨平台可用。都支持正数，如 `1.25` 表示 125%。修改后重启查看器。命令行可用 `--ui-scale 1.5`、`--zoom 1.2` 覆盖。
+
+源码目录列表以分号分隔；命令行指定 `--source-path` 会替换配置文件中的整组目录。布尔值支持 `true/false`、`yes/no`、`1/0`。支持注释、单/双引号与 `export KEY=value`，不执行 shell 命令或变量插值。未配置的项保留默认值，未知键被忽略。`.env` 已加入 Git 忽略列表。
+
+### 测试文件过滤
+
+Python 默认在解析前排除 `test/`、`tests/` 目录，以及 `test_*.py`、`*_test.py`、`test.py`、`conftest.py`；被排除模块和相关依赖都不会进入架构图。需要分析测试时使用 `--include-tests` 或 `ARCH_VIEW_INCLUDE_TESTS=true`；`--exclude-tests` 可覆盖配置恢复排除。即使显式指定 Python 测试源码目录，也需要开启 `--include-tests`。
+
+Java 继续使用已有的标准 `src/main/java` 自动发现规则；要分析 Java 测试，请显式添加 `--source-path module/src/test/java`。上述测试文件名过滤选项仅用于 Python。
+
 ### CLI 参数说明
 
 运行 `clj -M:run --help` 可以查看所有支持的命令行选项：
 
 | 参数 | 说明 |
 | :--- | :--- |
+| `--env-file <file>` | 指定默认配置文件，默认读取启动目录的 `.env` |
+| `--ui-scale <number>` | Java2D 界面和字体缩放 |
+| `--zoom <number>` | 架构图和文字的初始缩放 |
+| `--include-tests` / `--exclude-tests` | 包含或排除 Python 测试文件，默认排除 |
+| `--gui` | 覆盖配置中的无头模式，打开界面 |
 | `--help` | 打印使用帮助并退出 |
 | `--project-path <path>` | 待扫描的项目根目录路径（默认：当前目录 `.`） |
-| `--language <name>` | 指定语言：`clojure`（默认）或 `python` |
-| `--source-path <path>` | 相对于项目根目录的源码路径；可多次指定以包含多个源码根目录 |
+| `--language <name>` | 指定语言：`auto`（默认，自动识别）、`clojure`、`python` 或 `java` |
+| `--source-path <path>` | 覆盖自动发现的源码目录；可多次指定以包含多个源码根目录 |
 | `--in-edn <file>` | 从已导出的 EDN 文件加载架构，跳过源码扫描 |
 | `--out <file>` | 将解析得到的架构数据以 EDN 格式写入指定文件 |
 | `--no-gui` | 无头模式运行（不启动交互式图形界面窗口） |
+
+省略 `--language`（或使用 `--language auto`）时，优先识别项目根目录的构建标记：Clojure 的 `deps.edn` / `project.clj` / `bb.edn`，Python 的 `pyproject.toml` / `setup.py` / `setup.cfg` / `requirements.txt` / `Pipfile`，Java 的 `pom.xml` / Gradle 构建与设置文件。无标记时选择源码文件最多的受支持语言；多个语言标记时在这些语言中按源码数量选择。数量相同或无法识别时提示使用 `--language`。隐藏目录、构建输出和常见依赖目录不参与探测。显式指定 `--source-path` 时仅根据指定范围的源码识别语言。一次分析一种语言，混合项目可手动指定。
+
+Java 自动发现按目录约定工作，不解析构建配置中的自定义源码路径；这类路径仍使用 `--source-path`。启动时会打印实际语言与源码目录，便于核对。
 
 ### 运行示例
 
@@ -180,6 +224,15 @@ clj -M:run --language python --project-path D:/projects/ZhiYing --source-path ba
 
 # 仅聚焦特定子包
 clj -M:run --language python --project-path D:/projects/ZhiYing --source-path backend/app
+```
+
+#### 3. 分析 Java 项目
+```bash
+# 自动识别 Java 并发现所有模块的 src/main/java
+clj -M:run --project-path /Users/sounfury/javaProjects/hdfadvisor
+
+# 多模块项目，导出 EDN（无需编译目标项目）
+clj -M:run --project-path /path/to/java-project --no-gui --out architecture.edn
 ```
 
 ---

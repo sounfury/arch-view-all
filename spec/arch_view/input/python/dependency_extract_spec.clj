@@ -54,8 +54,8 @@
       (should= :python (:language opts))
       (should= ["src" "lib"] (:source-paths opts))))
 
-  (it "rejects Java until the reserved adapter is implemented"
-    (should-throw clojure.lang.ExceptionInfo (core/parse-args ["--language" "java"])))
+  (it "rejects unsupported languages"
+    (should-throw clojure.lang.ExceptionInfo (core/parse-args ["--language" "unknown"])))
 
   (it "rejects options without a value"
     (should-throw clojure.lang.ExceptionInfo (core/parse-args ["--language"]))
@@ -73,3 +73,14 @@
             (core/-main "--project-path" root "--language" "python" "--source-path" "code"))
           (should= :python (get-in @reloaded [:guidance :language]))
           (should= #{"main" "helper"} (get-in @reloaded [:graph :nodes])))))))
+
+(describe "Python test filtering through the architecture loader"
+  (it "defaults to production modules and accepts an explicit inclusion override"
+    (with-project {"app.py" ""
+                   "tests/test_app.py" "import app\n"
+                   "conftest.py" ""}
+      (fn [root]
+        (should= #{"app"} (get-in (core/load-architecture root) [:graph :nodes]))
+        (let [architecture (core/load-architecture root {:include-tests true})]
+          (should= #{"app" "tests.test_app" "conftest"} (get-in architecture [:graph :nodes]))
+          (should= #{{:from "tests.test_app" :to "app"}} (get-in architecture [:graph :edges])))))))

@@ -23,3 +23,8 @@
       (should= [] (:namespace-path state))
       (should= 700 (:viewport-height state))
       (should= 1300 (:viewport-width state)))))
+
+(describe "configured diagram zoom"
+  (it "initializes rendering and hit-testing with the same configured zoom"
+    (should= 1.4 (:zoom (sut/initial-sketch-state {:zoom 1.4})))
+    (should= 1.0 (:zoom (sut/initial-sketch-state {})))))

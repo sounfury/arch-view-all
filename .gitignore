@@ -4,3 +4,6 @@ examples/
 __pycache__/
 *.pyc
 bin/
+
+.env
+.env.local

@@ -14,7 +14,7 @@ class PythonAnalysisTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
 
     def write(self, name, content=""):
         path = self.root / name
@@ -93,6 +93,28 @@ raise RuntimeError('must never execute')
         self.write("lib/a.py")
         with self.assertRaisesRegex(ValueError, "Duplicate module a"):
             analyzer.analyze(self.root, ["src", "lib"])
+
+    def test_excludes_tests_before_parsing_and_removes_their_edges(self):
+        self.write("app.py", "import test_app")
+        self.write("test_app.py", "invalid syntax !!!")
+        self.write("app_test.py", "invalid syntax !!!")
+        self.write("conftest.py", "invalid syntax !!!")
+        self.write("tests/helper.py", "invalid syntax !!!")
+        self.write("pkg/test/helper.py", "invalid syntax !!!")
+        self.write("contest.py")
+        result = analyzer.analyze(self.root, ["."])
+        self.assertEqual(["app", "contest"], result["nodes"])
+        self.assertEqual([], result["edges"])
+
+    def test_can_explicitly_include_tests_and_their_dependencies(self):
+        self.write("app.py")
+        self.write("tests/test_app.py", "import app")
+        self.write("conftest.py")
+        result = analyzer.analyze(self.root, ["."], include_tests=True)
+        self.assertEqual(["app", "conftest", "tests.test_app"], result["nodes"])
+        self.assertEqual([["tests.test_app", "app"]], result["edges"])
+        self.assertEqual([], analyzer.analyze(self.root, ["tests"])["nodes"])
+        self.assertEqual(["test_app"], analyzer.analyze(self.root, ["tests"], True)["nodes"])
 
     def test_given_missing_root_then_reports_error(self):
         with self.assertRaisesRegex(ValueError, "Source directory does not exist"):

@@ -1,11 +1,15 @@
-{:paths ["src"]
+{:paths ["classes" "src"]
  :deps {org.clojure/clojure {:mvn/version "1.11.1"}
         ;; Must precede Quil: its jar also bundles the old Processing classes.
         ;; 4.2.3's synchronized AWT render deadlocks during Windows resizing.
         org.processing/core {:mvn/version "4.4.1"
-                             ;; The viewer uses Java2D, not the OpenGL renderers.
+                             ;; Java2D only. Processing 4.4.1's POM names the
+                             ;; OpenGL aggregator artifacts *-main; excluding
+                             ;; just jogl-all/gluegen-rt still pulls them.
                              :exclusions [org.jogamp.gluegen/gluegen-rt
-                                          org.jogamp.jogl/jogl-all]}
+                                          org.jogamp.gluegen/gluegen-rt-main
+                                          org.jogamp.jogl/jogl-all
+                                          org.jogamp.jogl/jogl-all-main]}
         quil/quil {:mvn/version "4.3.1563"
                    :exclusions [quil/processing-core]}}
  :aliases
@@ -24,8 +28,12 @@
         :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
                      speclj/speclj {:mvn/version "3.10.0"}}
         :main-opts ["-m" "speclj.cloverage" "--" "-p" "src" "-s" "spec" "--lcov"]}
-  :run {:main-opts ["-m" "arch-view.core"]}
+  :run {:jvm-opts ["--enable-native-access=ALL-UNNAMED"
+                   "-Dsun.java2d.metal=false"]
+        :main-opts ["-m" "arch-view.core"]}
   :smoke-ui {:extra-paths ["dev"]
+             :jvm-opts ["--enable-native-access=ALL-UNNAMED"
+                        "-Dsun.java2d.metal=false"]
              :main-opts ["-m" "arch-view.ui-smoke"]}
   :mutate {:extra-deps {io.github.unclebob/clj-mutate
                         {:git/url "https://github.com/unclebob/clj-mutate"
