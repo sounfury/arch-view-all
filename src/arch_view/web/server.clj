@@ -10,15 +10,16 @@
             [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
-           [java.net InetSocketAddress URLDecoder URI]
+           [java.net InetSocketAddress URLDecoder URI BindException]
            [java.awt Desktop]
            [java.util.concurrent Executors]))
 
-(declare ^:private same-origin? ^:private route! ^:private json! ^:private parse-options ^:private usage)
+(declare ^:private same-origin? ^:private route! ^:private json! ^:private parse-options ^:private usage
+         ^:private bind-server ^:private port-conflict-message)
 
 (defn start! [architecture project-path opts reload!]
   (let [state (atom (assoc (model/create-state architecture project-path opts) :can-reanalyze (boolean reload!)))
-        server (HttpServer/create (InetSocketAddress. "127.0.0.1" (int (get opts :port 7331))) 0)
+        {:keys [server requested-port]} (bind-server opts)
         executor (Executors/newFixedThreadPool 4)
         port (.getPort (.getAddress server))]
     (.createContext server "/"
@@ -33,23 +34,34 @@
                           (finally (.close ^HttpExchange exchange))))))
     (.setExecutor server executor)
     (.start server)
-    {:port port :url (str "http://127.0.0.1:" port)
+    {:port port :requested-port requested-port :url (str "http://127.0.0.1:" port)
      :stop (fn [] (.stop server 0) (.shutdownNow executor))}))
 
 (defn -main [& args]
   (try
     (let [opts (parse-options args)]
       (if (:help opts) (println (usage))
-        (let [load! #(model/create-state (core/load-architecture (:project-path opts) opts) (:project-path opts) opts)
+        (let [_ (println (str "正在分析项目：" (.getCanonicalPath (io/file (:project-path opts)))))
+              _ (flush)
+              load! #(model/create-state (core/load-architecture (:project-path opts) opts) (:project-path opts) opts)
               architecture (if (:in-edn opts) (core/load-architecture-edn (:in-edn opts))
                                (core/load-architecture (:project-path opts) opts))
+              _ (println "分析完成，正在启动网页服务……")
+              _ (flush)
               app (start! architecture (:project-path opts) opts (when-not (:in-edn opts) load!))]
           (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable (:stop app)))
+          (when (not= (:requested-port app) (:port app))
+            (when (pos? (:requested-port app))
+              (println (str "默认端口 " (:requested-port app) " 已被占用，已改用空闲端口 " (:port app) "。"))))
           (println (str "架构 Web UI: " (:url app)))
-          (println "Ctrl+C 停止服务。旧桌面界面仍使用 clj -M:run。")
+          (println (str "服务已就绪；进程号（PID）：" (.pid (java.lang.ProcessHandle/current))))
+          (println "网页服务会持续占用前台。按 Ctrl+C 停止；自动化调用请使用持久或后台进程。")
+          (flush)
           (when-not (:no-browser opts)
             (try
-              (when (Desktop/isDesktopSupported) (.browse (Desktop/getDesktop) (URI. (:url app))))
+              (if (and (Desktop/isDesktopSupported) (.isSupported (Desktop/getDesktop) java.awt.Desktop$Action/BROWSE))
+                (.browse (Desktop/getDesktop) (URI. (:url app)))
+                (println "当前环境不支持自动打开浏览器，请打开上方地址。"))
               (catch Exception _ (println "请在浏览器中打开上方地址。")))))))
     (catch Exception ex
       (binding [*out* *err*] (println (.getMessage ex)))
@@ -57,18 +69,36 @@
 
 ;; ===== 私有方法 =====
 
+(defn- bind-server [opts]
+  (let [port (int (get opts :port 7331))
+        bind! #(HttpServer/create (InetSocketAddress. "127.0.0.1" (int %)) 0)]
+    (try
+      {:server (bind! port) :requested-port port}
+      (catch BindException ex
+        (if (contains? opts :port)
+          (throw (ex-info (port-conflict-message port) {:port port} ex))
+          {:server (bind! 0) :requested-port port})))))
+
+(defn- port-conflict-message [port]
+  (str "端口 " port " 已被占用，无法启动网页服务。\n"
+       "可改用 --port 0 自动分配空闲端口，或指定其他端口。\n"
+       "Windows 查询占用进程：Get-NetTCPConnection -State Listen -LocalPort " port
+       " | Select-Object LocalAddress,LocalPort,OwningProcess\n"
+       "确认原服务是否仍在使用后，可在其终端按 Ctrl+C 停止。"))
+
 (defn- usage []
   (str "用法: clj -M:web [--project-path <目录>] [--language auto|clojure|python|kotlin|java]\n"
        "  --source-path <目录>        源码目录，可重复指定\n"
        "  --architecture-doc <文件>  可选：项目内已有的 Markdown 说明\n"
        "  --in-edn <文件>            加载导出的架构（源码按 --project-path 定位）\n"
-       "  --port <端口>              默认 7331，0 表示自动选择\n"
+       "  --port <端口>              默认 7331，被占用时自动换端口；0 自动选择\n"
        "  --no-browser               不自动打开浏览器\n"
        "  --help                     显示帮助\n"
-       "旧界面仍使用 clj -M:run，两种界面可同时启动。\n"))
+       "服务就绪后输出地址和进程号（PID），持续占用前台；Ctrl+C 停止。\n"
+       "明确指定的端口被占用时提示错误；自动化调用使用持久或后台进程与 --no-browser。\n"))
 
 (defn- parse-options [args]
-  (loop [args (seq args) opts {:project-path "." :port 7331}]
+  (loop [args (seq args) opts {:project-path "."}]
     (if-not args opts
       (let [[arg value] args]
         (cond

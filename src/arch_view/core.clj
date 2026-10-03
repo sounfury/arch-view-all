@@ -4,6 +4,7 @@
 ;; mutation-tested: 2026-03-08
 (ns arch-view.core
   (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [arch-view.config :as config]
             [clojure.string :as str]
             [arch-view.input.languages :as languages]
@@ -132,7 +133,8 @@
         (println "Nodes:" (count (:nodes graph)))
         (println "Edges:" (count (:edges graph)))
         (when out
-          (spit out (pr-str architecture)))
+          (spit out (pr-str architecture))
+          (println (str "架构数据已导出：" (.getCanonicalPath (io/file out)))))
         (when-not no-gui
           (-> (render/show! scene {:title (str "architecture-viewer: " (str/trim source-label))
                                    :architecture architecture

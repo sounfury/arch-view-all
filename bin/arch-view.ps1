@@ -1,9 +1,6 @@
 ﻿# 职责：找到工具安装目录和运行依赖，将用户参数交给统一的 arch-view 命令入口。
-[CmdletBinding()]
-param(
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$ScriptArgs
-)
+# 直接使用原始参数，避免通用参数机制拦截 -out 等命令行选项。
+[string[]]$ScriptArgs = @($args)
 
 $archViewHome = if ($env:ARCH_VIEW_HOME) { $env:ARCH_VIEW_HOME } else { Split-Path -Parent $PSScriptRoot }
 $archViewHome = [System.IO.Path]::GetFullPath($archViewHome)

@@ -15,6 +15,7 @@
 
 (declare ^:private architecture-session! ^:private optional-documents! ^:private lazy-dependency-session!
          ^:private language-adapters-session! ^:private cli-session! ^:private status-session!
+         ^:private launcher-session! ^:private port-session!
          ^:private with-project ^:private check! ^:private request ^:private encode)
 
 (defn -main [& _]
@@ -22,6 +23,7 @@
     (architecture-session!) (optional-documents!) (lazy-dependency-session!)
     (language-adapters-session!)
     (cli-session!)
+    (launcher-session!) (port-session!)
     (status-session!)
     (println "Web HTTP 验收通过；视觉与真实项目使用仍需人工验收。")
     (shutdown-agents)
@@ -290,6 +292,14 @@
       (check! (= :java (get-in (core/load-architecture root) [:guidance :language]))
               "Java 项目使用 Kotlin 构建脚本时仍必须识别为 Java"))))
 
+(defn- run-command [root command]
+  (let [process (-> (ProcessBuilder. ^java.util.List command)
+                    (.directory (io/file root)) (.redirectErrorStream true) (.start))]
+    (try
+      (check! (.waitFor process 30 java.util.concurrent.TimeUnit/SECONDS) "命令验收不能挂起或意外打开窗口")
+      {:status (.exitValue process) :body (slurp (.getInputStream process) :encoding "UTF-8")}
+      (finally (.destroyForcibly process)))))
+
 (defn- run-cli [root args]
   (let [java-bin (io/file (System/getProperty "java.home") "bin"
                           (if (str/starts-with? (System/getProperty "os.name") "Windows") "java.exe" "java"))
@@ -300,13 +310,8 @@
                                             (re-pattern (java.util.regex.Pattern/quote java.io.File/pathSeparator)))))
         command (into [(str java-bin) "-Dfile.encoding=UTF-8" "-Dstdout.encoding=UTF-8" "-Dstderr.encoding=UTF-8"
                        (str "-Darch-view.home=" tool-root)
-                       "-cp" classpath "clojure.main" "-m" "arch-view.cli"] args)
-        process (-> (ProcessBuilder. ^java.util.List command)
-                    (.directory (io/file root)) (.redirectErrorStream true) (.start))]
-    (try
-      (check! (.waitFor process 30 java.util.concurrent.TimeUnit/SECONDS) "命令验收不能挂起或意外打开窗口")
-      {:status (.exitValue process) :body (slurp (.getInputStream process) :encoding "UTF-8")}
-      (finally (.destroyForcibly process)))))
+                       "-cp" classpath "clojure.main" "-m" "arch-view.cli"] args)]
+    (run-command root command)))
 
 (defn- cli-session! []
   ;; 从带中文和空格的目标项目目录启动独立进程，验证命令入口不依赖调用者的工具源码目录。
@@ -314,6 +319,9 @@
                  "src/demo/helper.clj" "(ns demo.helper)"
                  ".env" "ARCH_VIEW_NO_GUI=false\n"}
     (fn [root]
+      (let [help (run-cli root [])]
+        (check! (and (= 0 (:status help)) (contains-text? help "用法：arch-view"))
+                "无参数调用必须显示帮助并退出，不能意外打开桌面窗口"))
       (let [scan (run-cli root ["scan" "." "--out" "architecture.edn"])
             legacy (run-cli root ["--project-path" "." "--no-gui" "--out" "legacy.edn"])
             desktop (run-cli root ["desktop" "." "--no-gui" "--out" "desktop.edn"])]
@@ -327,9 +335,13 @@
                        (:graph (edn/read-string (slurp (io/file root name) :encoding "UTF-8"))))
                     "新旧桌面参数与 scan 导出的依赖必须一致")))
         (check! (= 0 (:status (run-cli root ["init" "."]))) "必须能从工具安装目录复制模板")
-        (check! (= (slurp "ARCHITECTURE_TEMPLATE.md" :encoding "UTF-8")
-                   (slurp (io/file root "ARCHITECTURE_TEMPLATE.md") :encoding "UTF-8"))
-                "模板与新老项目提示词必须完整复制")
+        (let [template (slurp "ARCHITECTURE_TEMPLATE.md" :encoding "UTF-8")]
+          (check! (= template (slurp (io/file root "ARCHITECTURE_TEMPLATE.md") :encoding "UTF-8"))
+                  "架构模板必须完整复制")
+          (check! (not (str/includes? template "给 AI 的架构文档生成提示词"))
+                  "模板只保留架构格式，生成提示词必须放在技能中")
+          (check! (.isFile (io/file "skills/arch-view/references/architecture-prompts.md"))
+                  "新老项目生成提示词必须位于技能参考文件"))
         (spit (io/file root "ARCHITECTURE_TEMPLATE.md") "用户修改过的模板" :encoding "UTF-8")
         (check! (= 1 (:status (run-cli root ["init" "."]))) "已有模板时必须拒绝覆盖")
         (check! (= "用户修改过的模板" (slurp (io/file root "ARCHITECTURE_TEMPLATE.md") :encoding "UTF-8"))
@@ -346,3 +358,56 @@
       (check! (contains? (get-in architecture [:graph :edges]) {:from "arch-view.cli" :to target})
               "架构图必须识别 CLI 到网页和桌面的按需加载依赖")))
   (println "PASS: 统一命令、跨项目运行、旧参数兼容、相对路径导出、模板保护、中文帮助与架构接入"))
+
+(defn- launcher-session! []
+  ;; 通过真实 Windows 安装入口验收参数传递，不能仅绕过包装脚本调用 Java。
+  (when (str/starts-with? (System/getProperty "os.name") "Windows")
+    (with-project {"src/demo/main.clj" "(ns demo.main)"}
+      (fn [root]
+        (let [powershell (str (io/file (System/getenv "SystemRoot") "System32/WindowsPowerShell/v1.0/powershell.exe"))
+              pwsh (io/file (System/getenv "ProgramFiles") "PowerShell/7/pwsh.exe")
+              destination (str (io/file root "命令入口"))
+              installer (.getCanonicalPath (io/file "bin/install.ps1"))
+              installed (run-command root [powershell "-NoProfile" "-File" installer "-Destination" destination])
+              launcher (str (io/file destination "arch-view.ps1"))
+              quote-ps #(str "'" (str/replace % "'" "''") "'")]
+          (check! (= 0 (:status installed)) (str "安装入口必须能生成可运行的包装脚本：" (:body installed)))
+          (doseq [[index shell] (map-indexed vector (cond-> [powershell] (.isFile pwsh) (conj (str pwsh))))]
+            (let [output (str "导出 数据 " index ".edn")
+                  response (run-command root [shell "-NoProfile" "-Command"
+                                              (str "& " (quote-ps launcher) " scan . --out " (quote-ps output))])
+                  invalid (run-command root [shell "-NoProfile" "-Command"
+                                             (str "& " (quote-ps launcher) " scan . -out invalid.edn")])]
+              (check! (= 0 (:status response)) (str "未加引号的 --out 必须能通过包装脚本：" (:body response)))
+              (check! (= #{"demo.main"} (get-in (edn/read-string (slurp (io/file root output) :encoding "UTF-8")) [:graph :nodes]))
+                      "中文与空格路径必须完整传递，并导出调用者项目")
+              (check! (and (= 1 (:status invalid)) (contains-text? invalid "当前命令不支持参数：-out"))
+                      "单横线参数必须交给 CLI 报错，不能被 PowerShell 的通用参数机制拦截")))
+          (let [response (run-command root ["cmd.exe" "/d" "/c"
+                                            (str "call \"" (io/file destination "arch-view.cmd") "\" scan . --out \"命令提示符 数据.edn\"")])]
+            (check! (= 0 (:status response)) (str "命令提示符入口也必须支持导出：" (:body response)))
+            (check! (.isFile (io/file root "命令提示符 数据.edn")) "命令提示符入口必须保留输出路径"))))))
+  (println "PASS: Windows PowerShell、PowerShell 7 与命令提示符包装入口参数传递（非 Windows 跳过）"))
+
+(defn- port-session! []
+  ;; 使用真实监听端口验收默认回退和显式端口冲突，不关闭已有的用户服务。
+  (with-project {"src/demo/main.clj" "(ns demo.main)"}
+    (fn [root]
+      (let [architecture (core/load-architecture root)
+            reserved (try (server/start! architecture root {:port 7331} nil)
+                          (catch clojure.lang.ExceptionInfo _ nil))]
+        (try
+          (let [app (server/start! architecture root {} nil)]
+            (try
+              (check! (and (pos? (:port app)) (not= 7331 (:port app))) "默认端口占用时必须自动改用空闲端口")
+              (check! (= 200 (:status (get! app "/api/project"))) "改用端口后的服务必须可访问")
+              (let [error (try (let [unexpected (server/start! architecture root {:port (:port app)} nil)]
+                                ((:stop unexpected)) nil)
+                              (catch clojure.lang.ExceptionInfo ex (.getMessage ex)))]
+                (check! (and error (str/includes? error "已被占用")
+                             (str/includes? error "--port 0") (str/includes? error "OwningProcess"))
+                        "显式端口冲突必须给出端口选择和进程查询提示"))
+              (check! (= 200 (:status (get! app "/api/project"))) "冲突失败不能接管或停止原服务")
+              (finally ((:stop app)))))
+          (finally (when reserved ((:stop reserved))))))))
+  (println "PASS: 默认端口占用自动回退、显式端口冲突诊断与原服务保护"))

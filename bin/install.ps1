@@ -18,8 +18,7 @@ New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 $launcherPath = $archViewLauncher.Replace("'", "''")
 $powershellShim = @'
 # 职责：从任意项目目录调用已安装的架构工具，并原样传递命令参数。
-[CmdletBinding()]
-param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ScriptArgs)
+[string[]]$ScriptArgs = @($args)
 $archViewLauncher = '__LAUNCHER__'
 & $archViewLauncher @ScriptArgs
 exit $LASTEXITCODE

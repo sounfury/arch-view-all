@@ -17,14 +17,17 @@ export function parseArchitectureDocument(content) {
     const direct = cleanTitle.match(/^([\w\u4e00-\u9fff/.-]+)\s*[·：:|—–]\s*(.+)$/);
     const reverse = cleanTitle.match(/^(.+?)\s*[（(]([\w\u4e00-\u9fff/.-]+)[）)]$/);
     const link = markdown.match(/\]\(#module=([^\s)]+)\)/);
-    const module = link ? decodeModule(link[1]) : direct?.[1] || reverse?.[2];
+    // 标题标识关联流程节点，探索链接定位代码；两者可以分别是 service 和 ani/rss/service。
+    const id = direct?.[1] || reverse?.[2];
+    const target = link ? decodeModule(link[1]) : id;
+    const module = target?.split(/[/.]/).filter(Boolean).join('/');
     const fields = body.filter(t => t.type === 'list').flatMap(t => t.items).map(item => text(item.text));
     const summary = field(fields, '职责|责任|用途') || text(body.find(t => t.type === 'paragraph')?.text || '');
     const rawStatus = field(fields, '实现状态').replace(/[。；;]\s*$/, '');
     const status = ({ '已实现': '已完成', '待实现': '未完成' })[rawStatus] || (['已完成', '未完成', '进行中'].includes(rawStatus) ? rawStatus : '');
     const scopes = field(fields, '覆盖范围').replace(/[。；;]\s*$/, '').split(/[、,，;；\s]+/).filter(Boolean);
     sections.push({ title, heading: token.text, depth: token.depth, parent, markdown, summary, status,
-      module: module || null, scopes, label: direct?.[2] || reverse?.[1] || cleanTitle });
+      id: id || module || null, module: module || null, scopes, label: direct?.[2] || reverse?.[1] || cleanTitle });
   }
   const subsystemSection = sections.find(s => s.depth === 2 && s.title === '核心子系统与职责');
   const roles = sections.filter(s => s.module && (subsystemSection ? s.parent === subsystemSection.title && s.depth > 2 : true));

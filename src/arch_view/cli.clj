@@ -18,9 +18,9 @@
                  "  serve     启动网页工作台，默认自动打开浏览器\n"
                  "  desktop   启动桌面架构窗口\n"
                  "  scan      分析源码，可导出架构数据，不打开窗口\n"
-                 "  init      复制架构模板及新老项目提示词，不覆盖已有文件\n"
+                 "  init      复制架构模板，不覆盖已有文件\n"
                  "  help      查看帮助\n\n"
-                 "不写命令时兼容旧用法，默认启动桌面窗口。\n"
+                 "不传参数时显示帮助；仅传旧分析参数时仍启动桌面窗口。\n"
                  "示例：arch-view serve .\n"
                  "      arch-view scan . --out architecture.edn\n"
                  "      arch-view init .\n"
@@ -49,10 +49,11 @@
 (defn- command-help [command]
   (case command
     "serve" (str "启动本机网页工作台：\n" (common-help)
-                 "  --port <端口>           默认 7331，0 表示自动分配\n"
+                 "  --port <端口>           默认 7331，被占用时自动换端口；0 自动分配\n"
                  "  --architecture-doc <文件>  读取已有的架构说明\n"
                  "  --no-browser            启动服务但不自动打开浏览器\n"
-                 "按 Ctrl+C 停止网页服务。\n")
+                 "就绪后输出地址和进程号（PID），服务持续占用前台；按 Ctrl+C 停止。\n"
+                 "自动化调用请使用持久或后台进程，并添加 --no-browser。\n")
     ("desktop" "scan")
     (str (if (= command "scan") "分析源码，不打开窗口：\n" "启动桌面窗口：\n")
          (common-help)
@@ -62,7 +63,7 @@
          "  --zoom <数值>           架构图初始缩放\n"
          "  --ui-scale <数值>       桌面界面缩放\n"
          (when (= command "desktop") "  --gui / --no-gui         打开或关闭桌面窗口\n"))
-    "init" (str "向项目复制 ARCHITECTURE_TEMPLATE.md，包含新老项目的 AI 提示词。\n"
+    "init" (str "向项目复制 ARCHITECTURE_TEMPLATE.md；新老项目的生成提示词由 arch-view 技能提供。\n"
                 "模板复制后按需生成 ARCHITECTURE.md，不修改源码或覆盖已有模板。\n"
                 "  --project-path <目录>   指定目标项目，默认当前目录\n")
     (throw (ex-info (str "未知命令：" command) {}))))
@@ -111,12 +112,12 @@
       (throw (ex-info (str "模板已存在，未覆盖：" target) {})))
     (Files/copy (.toPath template) (.toPath target) (make-array java.nio.file.CopyOption 0))
     (println (str "已复制架构模板：" target))
-    (println "末尾包含新老项目的 AI 提示词；按需生成 ARCHITECTURE.md。")))
+    (println "配合 arch-view 技能中的新老项目提示词，按需生成 ARCHITECTURE.md。")))
 
 (defn- dispatch! [args]
   (let [first-arg (first args)]
     (cond
-      (contains? #{"--help" "help"} first-arg)
+      (or (nil? first-arg) (contains? #{"--help" "help"} first-arg))
       (println (usage-summary (second args)))
 
       :else
@@ -132,5 +133,11 @@
             (case command
               "serve" (apply (requiring-resolve 'arch-view.web.server/-main) command-args)
               "init" (initialize-template! command-args)
-              "scan" (apply (requiring-resolve 'arch-view.core/-main) (concat command-args ["--no-gui"]))
+              "scan" (do
+                       (println "正在分析源码，不打开窗口……")
+                       (flush)
+                       (apply (requiring-resolve 'arch-view.core/-main) (concat command-args ["--no-gui"]))
+                       (println "源码分析已完成。")
+                       (flush)
+                       (shutdown-agents))
               "desktop" (apply (requiring-resolve 'arch-view.core/-main) command-args))))))))
