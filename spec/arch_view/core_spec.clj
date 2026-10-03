@@ -1,3 +1,5 @@
+;; 回归测试：检查项目分析、命令行参数、架构导出和桌面启动是否符合已有行为。
+
 (ns arch-view.core-spec
   (:require [arch-view.core :as sut]
             [arch-view.render.ui.quil.view :as render]

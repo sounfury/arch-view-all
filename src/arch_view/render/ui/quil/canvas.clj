@@ -1,3 +1,6 @@
+;; 职责：绘制桌面架构图中的模块、工具栏、悬浮说明、循环警告和滚动条。
+;; 核心入口：绘制完整画面（draw-scene）。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.quil.canvas
   (:require [quil.core :as q]))

@@ -1,3 +1,5 @@
+# 回归测试：检查脚本源码分析器（Python）的导入识别、目录过滤和抽象声明提取。
+
 """Behavior tests for static Python analysis; run with unittest discovery."""
 import importlib.util
 from pathlib import Path

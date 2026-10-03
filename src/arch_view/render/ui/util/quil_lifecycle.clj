@@ -1,3 +1,5 @@
+;; 工具函数：检查桌面窗口是否仍在运行，并等待用户关闭窗口。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.util.quil-lifecycle)
 

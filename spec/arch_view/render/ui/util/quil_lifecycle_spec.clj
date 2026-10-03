@@ -1,3 +1,5 @@
+;; 回归测试：检查桌面窗口状态判断和关闭等待工具是否符合已有行为。
+
 (ns arch-view.render.ui.util.quil-lifecycle-spec
   (:require [arch-view.render.ui.util.quil-lifecycle :as sut]
             [speclj.core :refer :all]))

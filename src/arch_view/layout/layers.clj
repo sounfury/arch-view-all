@@ -1,3 +1,6 @@
+;; 职责：找出循环依赖，并根据模块之间的依赖关系计算架构图的上下层级。
+;; 核心入口：分配模块层级（assign-layers）。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.layout.layers
   (:require [clojure.set :as set]))

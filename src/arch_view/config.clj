@@ -1,3 +1,5 @@
+;; 工具函数：读取默认配置文件和环境变量，并检查开关、缩放等配置值。
+
 (ns arch-view.config
   (:refer-clojure :exclude [parse-boolean])
   (:require [clojure.java.io :as io]

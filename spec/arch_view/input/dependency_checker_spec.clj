@@ -1,3 +1,5 @@
+;; 回归测试：检查架构规则文件的读取是否符合已有行为。
+
 (ns arch-view.input.dependency-checker-spec
   (:require [arch-view.input.dependency-checker :as sut]
             [speclj.core :refer :all]))

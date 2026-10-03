@@ -1,3 +1,5 @@
+;; 工具函数：缩短模块名称、拆分长标题，并计算文字宽度和避免重叠的偏移量。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.util.labels
   (:require [clojure.string :as str]))

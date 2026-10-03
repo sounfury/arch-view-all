@@ -1,3 +1,5 @@
+;; 回归测试：检查源码窗口显示和代码文字处理是否符合已有行为。
+
 (ns arch-view.render.ui.swing.source-window-spec
   (:require [arch-view.render.ui.swing.source-window :as sut]
             [speclj.core :refer :all]))

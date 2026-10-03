@@ -1,3 +1,5 @@
+;; 工具函数：计算缩放、滚动时的坐标变化，并判断常用操作按键。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.util.events-logic)
 

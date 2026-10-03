@@ -1,3 +1,5 @@
+;; 回归测试：检查鼠标悬停时的模块和标题定位是否符合已有行为。
+
 (ns arch-view.render.ui.util.module-hover-spec
   (:require [arch-view.render.ui.util.module-hover :as sut]
             [speclj.core :refer :all]))

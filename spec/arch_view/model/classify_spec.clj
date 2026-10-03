@@ -1,3 +1,5 @@
+;; 回归测试：检查普通依赖与抽象依赖的分类是否符合已有行为。
+
 (ns arch-view.model.classify-spec
   (:require [arch-view.model.classify :as sut]
             [speclj.core :refer :all]))

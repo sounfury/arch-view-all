@@ -1,3 +1,5 @@
+;; 回归测试：检查模块分层和循环依赖识别是否符合已有行为。
+
 (ns arch-view.layout.layers-spec
   (:require [arch-view.layout.layers :as sut]
             [speclj.core :refer :all]))

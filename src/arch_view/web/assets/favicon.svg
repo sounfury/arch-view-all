@@ -1,0 +1,3 @@
+<!-- 页面图标：用项目与子模块的层级关系表示架构工作台，显示在浏览器标签页上。 -->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#24654d"/><g fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"><rect x="12" y="5" width="8" height="7" rx="2"/><rect x="4" y="22" width="8" height="6" rx="2"/><rect x="20" y="22" width="8" height="6" rx="2"/><path d="M16 12v5M8 22v-5h16v5"/></g></svg>

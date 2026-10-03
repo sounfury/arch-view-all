@@ -1,3 +1,5 @@
+;; 回归测试：检查窗口尺寸变化后的延迟重新布局是否符合已有行为。
+
 (ns arch-view.render.ui.util.resize-spec
   (:require [arch-view.render.ui.util.resize :as sut]
             [speclj.core :refer :all]))

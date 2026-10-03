@@ -1,3 +1,5 @@
+;; 测试：检查默认配置文件、环境变量及参数值的读取和校验。
+
 (ns arch-view.config-spec
   (:require [arch-view.config :as sut]
             [arch-view.core :as core]

@@ -1,3 +1,5 @@
+;; 工具函数：拖动窗口边缘时保持当前画面，尺寸稳定后再重新计算布局。
+
 (ns arch-view.render.ui.util.resize)
 
 (def settle-ms 200)

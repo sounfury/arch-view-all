@@ -1,3 +1,5 @@
+;; 回归测试：检查浏览路径、返回位置和可展开标记是否符合已有行为。
+
 (ns arch-view.render.ui.util.scene-state-spec
   (:require [arch-view.render.ui.util.scene-state :as sut]
             [speclj.core :refer :all]))

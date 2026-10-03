@@ -1,6 +1,6 @@
 # architecture-viewer (架构可视化工具)
 
-Clojure 开发的代码架构可视化工具，用于将 Clojure、Python 与 Java 项目可视化为清晰的分层模块与依赖指示图。
+Clojure 开发的代码架构可视化工具，用于将 Clojure、Python、Kotlin 与 Java 项目可视化为清晰的分层模块与依赖指示图。
 
 ![Empire 顶层架构示意图](images/empire-top-level.svg)
 
@@ -10,6 +10,7 @@ Clojure 开发的代码架构可视化工具，用于将 Clojure、Python 与 Ja
 - [多语言适配架构](#多语言适配架构)
   - [Clojure 适配器](#clojure-适配器)
   - [Python 适配器](#python-适配器)
+  - [Kotlin 适配器](#kotlin-适配器---language-kotlin)
   - [Java 适配器](#java-适配器)
   - [通用流水线](#通用流水线)
 - [分层原理](#分层原理)
@@ -25,7 +26,7 @@ Clojure 开发的代码架构可视化工具，用于将 Clojure、Python 与 Ja
 
 ## 多语言适配架构
 
-架构分析器采用模块化适配层设计，适配器位于 `src/arch_view/input/{clojure,python,java}`，并在 `arch-view.input.languages` 中统一注册与分派。
+架构分析器采用模块化适配层设计，适配器位于 `src/arch_view/input/{clojure,python,kotlin,java}`，并在 `arch-view.input.languages` 中统一注册与分派。
 
 ```
 src/arch_view/input/
@@ -35,13 +36,15 @@ src/arch_view/input/
 ├── python/
 │   ├── analyzer.py                # 基于 Python 标准库的 AST 依赖分析器
 │   └── dependency_extract.clj     # Python 依赖提取桥接
+├── kotlin/
+│   └── dependency_extract.clj     # 基于 Kotlin 官方 PSI 的源码依赖分析
 └── java/
     └── dependency_extract.clj     # JDK 编译器 AST 依赖解析
 ```
 
 ### Clojure 适配器
 - **扫描机制**：扫描 `--project-path` 下配置的源码路径（默认 `src`）。
-- **依赖分析**：解析每个源码文件的 `ns` 形式，提取命名空间之间的 `:require` 依赖关系。
+- **依赖分析**：读取命名空间声明（`ns`）中的 `:require`，以及目标明确的按需加载调用，例如 `(requiring-resolve 'my.adapter/run)`。只分析源码，不执行代码；引用数据、注释和动态计算的加载目标不计入依赖。
 - **抽象识别**：自动记录各命名空间的源文件路径，并将包含多态声明（`defprotocol`、`defmulti`、`definterface`）的命名空间标记为抽象模块。
 
 ### Python 适配器 (`--language python`)
@@ -65,6 +68,19 @@ src/arch_view/input/
   - 支持无 `__init__.py` 的命名空间包（Namespace Packages），展示为分组容器而非源文件叶子节点。
 - **源码安全展示**：
   - Python 源文件在内置查看器中以转义纯文本与行号形式展示，避免特殊字符导致渲染异常，同时完整保留 Clojure 高亮能力。
+
+### Kotlin 适配器 (`--language kotlin`)
+
+- **静态解析**：使用 Kotlin 官方 `kotlin-compiler-embeddable 2.2.0` 的 PSI 解析 `.kt`、`.kts` 文件。通过 `deps.edn` 自动获取依赖，无需安装 `kotlinc`，也无需编译、执行目标项目或加载它的 Gradle 插件、第三方依赖。
+- **文件与包**：每个文件对应一个模块，模块名为 `package` 声明加文件名（去扩展名），例如文件 `Contract.kt` 中的 `package example.api` 对应 `example.api.Contract`。无包声明的文件直接以文件名命名。包名由源码决定，不要求目录结构与包名一致；文件中可以有多个声明。
+- **源码目录**：默认扫描 `src`；若不存在则扫描项目根目录，支持 Android/Gradle 多模块目录。可重复指定 `--source-path` 来选择源码根目录或平台源码集，重叠根目录中的同一文件只扫描一次。
+- **内部依赖**：按声明索引解析显式导入、`as` 别名、嵌套类型、对象与伴生对象成员、顶层函数/属性和类型别名。显式内部导入形成依赖；通配符导入仅关联源码中引用的声明。同包引用与完全限定引用也会形成依赖，不生成自身依赖或外部库节点。
+- **声明识别**：包含 `interface`、`fun interface` 或 `abstract class` 的文件标记为抽象模块。注释和字符串普通文本不会产生依赖；字符串模板中的代码表达式参与分析。识别常见局部变量、参数和类型参数的名称遮蔽。
+- **扫描过滤**：忽略隐藏目录以及 `build`、`out`、`target`、`dist`、`node_modules`、`vendor`、`buildSrc`；默认不分析 `build.gradle.kts` 与 `settings.gradle.kts`。显式指定的源码根目录自身不受目录过滤限制。
+- **错误与展示**：语法错误包含文件路径和行号；不存在的源码目录、同包同文件名的模块冲突会明确报错。文件可以下钻查看，源码采用转义文本与行号展示。
+- **分析边界**：这是基于语法和声明索引的源码架构分析，不进行编译器语义解析。无法精确推断重载、接收者类型、动态调用、继承成员或生成代码；通配符中存在同名声明时可能关联多个候选文件。Java 文件暂不参与分析。不同平台源码集若包含同包同文件名，请用 `--source-path` 选择需要分析的源码集。
+
+Kotlin 包、导入别名和可导入声明的语法见 [Kotlin 官方包与导入文档](https://kotlinlang.org/docs/packages.html)。
 
 ### Java 适配器
 
@@ -148,6 +164,34 @@ clj -M:arch-view --project-path .
 
 ## 运行指南
 
+### 统一命令入口
+
+`arch-view` 可以在任意项目目录使用，不需要在目标项目里配置 Clojure 别名。
+
+```powershell
+# 在本工具目录安装 Windows 命令入口；默认放到用户的 .local/bin。
+.\bin\install.ps1
+
+# 在目标项目目录打开网页，默认自动打开浏览器。
+arch-view serve .
+
+# 指定项目、端口或已有说明。
+arch-view serve "D:\projects\java-projects\experiment" --language java --port 7332
+arch-view serve . --architecture-doc docs/design.md --no-browser
+
+# 桌面浏览、无界面分析及模板复制。
+arch-view desktop .
+arch-view scan . --out architecture.edn
+arch-view init .
+arch-view --help
+```
+
+安装脚本会更新命令入口并保留已有入口的备份，不修改用户 PATH。若安装目录还不在 PATH 中，按脚本提示加入用户 PATH。当前入口使用本工具目录内的源码与运行依赖，移动工具目录后需重新安装入口；工具目录也可用 `ARCH_VIEW_HOME` 指定。目标项目路径、输出路径和 `.env` 都相对于执行命令时的目录，不会切换到工具目录。
+
+`serve` 提供网页参数，`desktop` 和 `scan` 支持原来的分析与配置参数。旧的 `arch-view --project-path ...` 用法仍保留，默认走桌面入口。`init` 仅复制 `ARCHITECTURE_TEMPLATE.md`，包含新老项目提示词，已有模板不会被覆盖。尚未封装技能安装命令。
+
+命令分派逻辑位于 `src/arch_view/cli.clj`，因此会作为源码模块出现在本项目的架构图中；`bin/` 仅负责找到工具并启动它。直接使用 Clojure 时也可运行 `clj -M:cli serve .`。
+
 ### .env 默认配置
 
 将仓库中的 `.env.example` 复制为启动目录下的 `.env`，即可保存常用参数。也可使用 `--env-file /path/to/custom.env` 指定文件。相对项目路径和输出路径均相对于启动目录，源码路径相对于目标项目。
@@ -174,6 +218,63 @@ Python 默认在解析前排除 `test/`、`tests/` 目录，以及 `test_*.py`�
 
 Java 继续使用已有的标准 `src/main/java` 自动发现规则；要分析 Java 测试，请显式添加 `--source-path module/src/test/java`。上述测试文件名过滤选项仅用于 Python。
 
+### 可视化网页入口（与桌面界面并存）
+
+```powershell
+# 启动本项目的网页架构工作台，并自动打开浏览器
+clj -M:web --project-path .
+
+# 查看其他项目；保留相同的语言和源码目录参数
+clj -M:web --language python --project-path D:/projects/example --source-path backend
+
+# 使用项目内已有的宏观说明，不要求给每个包写文档
+clj -M:web --project-path . --architecture-doc docs/design.md
+
+# 自定义端口，不自动打开浏览器
+clj -M:web --project-path . --port 7332 --no-browser
+
+# 从快照浏览；project-path 指定对应源码和文档的项目目录
+clj -M:web --project-path . --in-edn architecture.edn
+```
+
+默认地址为 `http://127.0.0.1:7331`，服务仅监听本机。桌面界面仍使用
+`clj -M:run`，两个入口可以同时运行，网页中的重新分析只更新当前网页服务。
+关闭网页标签不会停止服务，在启动终端按 `Ctrl+C` 停止。
+
+网页以架构地图为中心，支持模块卡片、真实依赖连线、上下游高亮、搜索、
+缩放、逐层浏览、循环依赖定位和源码查看。单击模块查看详情，双击软件包
+进入内部，双击文件查看源码。箭头从使用方指向被依赖方。
+右侧的依赖项可直接点击定位：同一视图内选中目标，跨包依赖则进入目标所在的软件包，
+自动选中目标并滚动到可见位置，不需要先返回上层手动查找。
+
+宏观说明优先读取根目录的 `ARCHITECTURE.md`、`docs/architecture.md`，
+其次读取根 README；也可用 `--architecture-doc` 指定项目内任意已有 Markdown。
+源码目录及其父目录已有的 README 会进入文档列表，没有说明文档也能正常浏览。
+推荐使用“项目说明、数据流、核心子系统与职责、数据模型、技术栈、常用运行命令速查”六个二级章节，数据模型可以留空。
+“核心子系统与职责”下使用三级标题，例如 `### 1. input · 源码静态分析`，
+以 `- **职责**：……` 写职责，以 `- **实现状态**：已完成。`、`未完成。` 或 `进行中。` 手动记录状态。
+`[探索模块](#module=input)` 可明确关联代码模块；没有链接时也可从上述标题读取模块标识。
+包内说明只关联当前包的子模块，避免同名模块的说明混淆。旧版二级模块标题仍兼容。
+实现状态完全采用维护者的文档标记，不根据目录是否存在或代码内容自动判断；未填写时不显示状态标签，维护者可在模块详情的三项单选框中选择状态并保存到文档。
+
+源码未归入文档声明的任何子系统时，图上方显示红框“未在架构文档里提到”，这些模块暂不画进图中，仍可从红框查看源码。声明一个软件包即可覆盖其子包；一个子系统涉及多个包时，可用 `覆盖范围` 字段列出包标识。
+
+“数据流”章节使用标注为 `mermaid` 的代码块，支持 `flowchart` 或 `graph` 流程图，
+包括分支、反馈、数据标签及不同节点形状。Mermaid 节点标识与子系统标识相同时，
+点击节点可查看职责、手动状态与对应代码结构。“文档数据流”和“代码依赖”可随时切换：
+前者来自文档设计，后者来自源码分析。未完成节点保留在图上，错误语法保留原文，其他视图仍可使用。
+代码图默认只显示当前模块的上下游连线：鼠标指向可预览，点击可固定；需要查看全局时，将“连线范围”切换为“全部模块”。卡片按依赖层排列，跨层连线沿卡片外侧绕行。
+右上角“全屏查看”可让工作台占满浏览器页面的可用区域，保留浏览器地址栏和窗口；按 Esc 或点“退出全屏”返回。按住画布空白处拖动可向左右或上下移动整张图；“适应画布”可恢复初始位置。代码图与文档数据流都支持拖动和缩放。
+文档阅读面板也会绘制 Mermaid 图，并提供原文查看。缺少文档的项目仍可浏览代码依赖，无需 AI。
+
+文件顶部的注释可作为源码模块说明；也支持模块文档字符串和顶部块注释。
+本项目的中文文件头区分工具函数与功能职责，必要时注明核心入口。
+网页的样式和交互文件在 `src/arch_view/web/assets`，修改 CSS 后刷新浏览器即可查看。
+浏览器脚本随项目附带，运行时不需要连接内容分发网络。
+
+自动验收：`clj -M:accept-web`。人工验收时打开网页，检查全局结构是否易懂，
+单击及双击模块、查看源码说明，修改源码后重新分析；同时确认原桌面入口仍可使用。
+
 ### CLI 参数说明
 
 运行 `clj -M:run --help` 可以查看所有支持的命令行选项：
@@ -187,7 +288,7 @@ Java 继续使用已有的标准 `src/main/java` 自动发现规则；要分析 
 | `--gui` | 覆盖配置中的无头模式，打开界面 |
 | `--help` | 打印使用帮助并退出 |
 | `--project-path <path>` | 待扫描的项目根目录路径（默认：当前目录 `.`） |
-| `--language <name>` | 指定语言：`auto`（默认，自动识别）、`clojure`、`python` 或 `java` |
+| `--language <name>` | 指定语言：`auto`（默认，自动识别）、`clojure`、`python`、`kotlin` 或 `java` |
 | `--source-path <path>` | 覆盖自动发现的源码目录；可多次指定以包含多个源码根目录 |
 | `--in-edn <file>` | 从已导出的 EDN 文件加载架构，跳过源码扫描 |
 | `--out <file>` | 将解析得到的架构数据以 EDN 格式写入指定文件 |
@@ -235,6 +336,21 @@ clj -M:run --project-path /Users/sounfury/javaProjects/hdfadvisor
 clj -M:run --project-path /path/to/java-project --no-gui --out architecture.edn
 ```
 
+#### 4. 分析 Kotlin 项目
+```bash
+# 扫描 Kotlin/Android 多模块项目并启动 GUI
+clj -M:run --language kotlin --project-path /path/to/kotlin-project
+
+# 仅分析指定模块的生产源码
+clj -M:run --language kotlin --project-path /path/to/project --source-path app/src/main --no-gui --out architecture.edn
+
+# 合并多个模块的源码根目录
+clj -M:run --language kotlin --project-path /path/to/project --source-path app/src/main --source-path library/src/main
+
+# Kotlin Multiplatform：选择公共源码集
+clj -M:run --language kotlin --project-path /path/to/project --source-path shared/src/commonMain
+```
+
 ---
 
 ## 测试套件
@@ -272,4 +388,9 @@ clj -M:spec
 
 # 运行 Python AST 分析器单元测试
 python -B -m unittest discover -s spec/python -v
+
+# Kotlin 端到端验收（扫描、依赖、分组、导出、重新分析、错误诊断）
+clj -M:accept-kotlin
 ```
+
+Kotlin 人工验收：用一个实际项目启动 GUI，下钻到源码文件并点击查看，检查包分组、接口/抽象类标记及预期依赖；修改一条内部导入后点击 `Reanalyze`，确认图更新且仍使用 Kotlin 和原有源码目录。

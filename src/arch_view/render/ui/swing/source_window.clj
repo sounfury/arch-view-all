@@ -1,3 +1,6 @@
+;; 职责：打开独立的源码查看窗口，显示带行号的代码和适用的语法着色。
+;; 核心入口：打开源码窗口（open-source-file-window!）。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.swing.source-window
   (:require [clojure.java.io :as io]

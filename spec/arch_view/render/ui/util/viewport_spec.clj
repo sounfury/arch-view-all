@@ -1,3 +1,5 @@
+;; 回归测试：检查可见区域、滚动范围和滚动条位置是否符合已有行为。
+
 (ns arch-view.render.ui.util.viewport-spec
   (:require [arch-view.render.ui.util.viewport :as sut]
             [speclj.core :refer :all]))

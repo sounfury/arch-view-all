@@ -1,3 +1,5 @@
+;; 回归测试：检查桌面文字绘制和屏幕缩放设置是否符合已有行为。
+
 (ns arch-view.render.ui.util.text-rendering-spec
   (:require [arch-view.render.ui.util.text-rendering :as sut]
             [quil.applet :as applet]

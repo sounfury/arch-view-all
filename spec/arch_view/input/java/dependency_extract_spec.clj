@@ -1,3 +1,5 @@
+;; 测试：检查 Java 类型依赖、抽象声明、源码定位和包层级展示。
+
 (ns arch-view.input.java.dependency-extract-spec
   (:require [arch-view.input.java.dependency-extract :as sut]
             [arch-view.input.languages :as languages]

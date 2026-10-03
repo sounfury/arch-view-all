@@ -1,3 +1,5 @@
+;; 回归测试：检查桌面架构场景的生成和显示数据是否符合已有行为。
+
 (ns arch-view.render.quil-view-spec
   (:require [arch-view.render.ui.quil.view :as sut]
             [speclj.core :refer :all]))

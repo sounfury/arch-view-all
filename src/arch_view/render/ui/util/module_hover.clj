@@ -1,3 +1,5 @@
+;; 工具函数：判断鼠标是否位于模块标题或层级标题上，确定需要显示说明的对象。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.util.module-hover)
 

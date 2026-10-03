@@ -1,3 +1,5 @@
+;; 工具函数：保存和恢复浏览位置，记录返回路径，并判断模块能否继续展开。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.util.scene-state)
 

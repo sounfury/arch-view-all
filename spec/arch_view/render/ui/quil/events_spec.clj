@@ -1,3 +1,5 @@
+;; 回归测试：检查桌面鼠标、键盘和导航操作是否符合已有行为。
+
 (ns arch-view.render.ui.quil.events-spec
   (:require [arch-view.render.ui.quil.events :as sut]
             [speclj.core :refer :all]))

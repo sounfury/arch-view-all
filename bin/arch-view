@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# 职责：从脚本所在目录找到工具，保留用户当前目录，并启动统一命令入口。
+arch_view_home="${ARCH_VIEW_HOME:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
+ui_scale="${ARCH_VIEW_UI_SCALE:-1.25}"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) path_separator=';' ;;
+  *) path_separator=':' ;;
+esac
+arch_view_classpath="${arch_view_home}/classes${path_separator}${arch_view_home}/target/processing-core-4.4.1.jar${path_separator}${arch_view_home}/target/test-runtime/*${path_separator}${arch_view_home}/src"
+
+exec java -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 "-Darch-view.home=${arch_view_home}" "-Dsun.java2d.uiScale=${ui_scale}" -cp "${arch_view_classpath}" clojure.main -m arch-view.cli "$@"

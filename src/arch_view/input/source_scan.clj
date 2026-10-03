@@ -1,3 +1,5 @@
+;; 工具函数：遍历指定源码目录，收集需要分析的源码文件路径。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.input.source-scan
   (:require [clojure.java.io :as io]))

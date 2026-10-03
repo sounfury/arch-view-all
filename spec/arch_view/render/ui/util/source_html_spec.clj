@@ -1,3 +1,5 @@
+;; 回归测试：检查源码显示中的特殊字符、行号和语法着色是否符合已有行为。
+
 (ns arch-view.render.ui.util.source-html-spec
   (:require [clojure.string :as str]
             [arch-view.render.ui.util.source-html :as sut]

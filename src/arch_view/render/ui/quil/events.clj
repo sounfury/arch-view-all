@@ -1,3 +1,6 @@
+;; 职责：处理桌面窗口中的鼠标和键盘操作，更新导航、缩放及滚动状态。
+;; 核心入口：鼠标松开处理（handle-mouse-released）；键盘处理（handle-key-pressed）。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.quil.events
   (:require [arch-view.render.ui.util.events-logic :as logic]

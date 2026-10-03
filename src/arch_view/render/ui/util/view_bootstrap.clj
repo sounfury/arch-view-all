@@ -1,3 +1,5 @@
+;; 工具函数：根据架构图大小确定桌面窗口初始尺寸，并创建初始浏览状态。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.util.view-bootstrap)
 

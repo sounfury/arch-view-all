@@ -1,3 +1,6 @@
+;; 职责：组织桌面和网页共用的源码分析流程；同时处理桌面启动参数、架构导出和窗口启动。
+;; 核心入口：项目分析函数（load-architecture）；桌面与导出启动函数（-main）。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.core
   (:require [clojure.edn :as edn]
@@ -27,7 +30,7 @@
    "  --gui                      Override headless configuration.\n"
    "  --help                     Print this usage summary and exit.\n"
    "  --project-path <path>      Project root to scan (default: current directory).\n"
-   "  --language <name>          auto (default), clojure, python or java.\n"
+   "  --language <name>          auto (default), clojure, python, kotlin or java.\n"
    "  --source-path <path>       Override auto-discovered roots; repeat for multiple roots.\n"
    "  --in-edn <file>            Load architecture from an EDN file instead of scanning source.\n"
    "  --out <file>               Write architecture EDN output to file.\n"

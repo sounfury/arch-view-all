@@ -1,3 +1,5 @@
+;; 回归测试：检查窗口初始尺寸和初始浏览状态是否符合已有行为。
+
 (ns arch-view.render.ui.util.view-bootstrap-spec
   (:require [arch-view.render.ui.util.view-bootstrap :as sut]
             [speclj.core :refer :all]))

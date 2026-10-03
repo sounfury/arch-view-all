@@ -1,3 +1,5 @@
+;; 工具函数：设置桌面字体、屏幕缩放和文字绘制方式，让高分辨率屏幕上的文字更清晰。
+
 (ns arch-view.render.ui.util.text-rendering
   (:require [clojure.string :as str]
             [quil.core :as q]

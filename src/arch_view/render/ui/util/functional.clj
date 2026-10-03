@@ -1,3 +1,5 @@
+;; 工具函数：集中提供桌面界面的文字处理和布局计算，支持按依赖类型筛选显示内容。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.util.functional
   (:require [arch-view.render.ui.util.labels :as labels]

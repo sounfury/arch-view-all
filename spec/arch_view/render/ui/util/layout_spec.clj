@@ -1,3 +1,5 @@
+;; 回归测试：检查模块、标题和依赖线的布局计算是否符合已有行为。
+
 (ns arch-view.render.ui.util.layout-spec
   (:require [arch-view.render.ui.util.layout :as sut]
             [speclj.core :refer :all]))

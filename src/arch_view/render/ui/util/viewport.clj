@@ -1,3 +1,5 @@
+;; 工具函数：计算可见区域、滚动范围和滚动条位置，避免画面滚动超出内容边界。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.util.viewport)
 

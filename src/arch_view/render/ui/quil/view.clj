@@ -1,3 +1,6 @@
+;; 职责：组织桌面架构窗口的绘制和操作，支持逐层查看、滚动缩放和重新分析。
+;; 核心入口：打开桌面窗口（show!）。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.quil.view
   (:require [arch-view.domain.architecture-projection :as projection]

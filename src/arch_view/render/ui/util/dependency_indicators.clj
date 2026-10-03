@@ -1,3 +1,6 @@
+;; 职责：生成并绘制模块边缘的依赖三角标记，提供鼠标悬停时的依赖详情。
+;; 核心入口：生成依赖标记（dependency-indicators）；绘制标记（draw-dependency-indicators）。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.util.dependency-indicators
   (:require [arch-view.render.ui.util.functional :as functional]

@@ -1,3 +1,5 @@
+;; 回归测试：检查源码模块按规则划分到架构分组是否符合已有行为。
+
 (ns arch-view.model.components-spec
   (:require [arch-view.model.components :as sut]
             [speclj.core :refer :all]))

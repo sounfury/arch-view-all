@@ -1,3 +1,6 @@
+;; 职责：按照配置中的匹配规则，把源码模块划分到对应的架构分组。
+;; 核心入口：分配模块分组（assign-components）。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.model.components)
 

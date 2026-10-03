@@ -1,3 +1,5 @@
+;; 工具函数：把源码转换为适合窗口显示的网页内容，处理特殊字符、行号和语法着色。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.util.source-html
   (:require [clojure.string :as str])
@@ -92,6 +94,6 @@
        "</style></head><body>"
        "<div class='hdr'>" (html-escape title) "</div>"
        "<div class='src'><table>" (source-lines->html source
-                                    (if (some #(str/ends-with? (or title "") %) [".py" ".java"])
+                                    (if (re-find #"\.(py|java|kt|kts)$" (or title ""))
                                       html-escape colorize-clojure-html)) "</table></div>"
        "</body></html>"))

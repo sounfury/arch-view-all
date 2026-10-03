@@ -1,5 +1,8 @@
+;; 项目配置：声明运行所需的库、源码目录，以及桌面、网页和测试的启动入口。
+
 {:paths ["classes" "src"]
  :deps {org.clojure/clojure {:mvn/version "1.11.1"}
+        org.jetbrains.kotlin/kotlin-compiler-embeddable {:mvn/version "2.2.0"}
         ;; Must precede Quil: its jar also bundles the old Processing classes.
         ;; 4.2.3's synchronized AWT render deadlocks during Windows resizing.
         org.processing/core {:mvn/version "4.4.1"
@@ -31,6 +34,12 @@
   :run {:jvm-opts ["--enable-native-access=ALL-UNNAMED"
                    "-Dsun.java2d.metal=false"]
         :main-opts ["-m" "arch-view.core"]}
+  :web {:main-opts ["-m" "arch-view.web.server"]}
+  :cli {:main-opts ["-m" "arch-view.cli"]}
+  :accept-web {:extra-paths ["dev"]
+               :main-opts ["-m" "arch-view.web-acceptance"]}
+  :accept-kotlin {:extra-paths ["dev"]
+                  :main-opts ["-m" "arch-view.kotlin-acceptance"]}
   :smoke-ui {:extra-paths ["dev"]
              :jvm-opts ["--enable-native-access=ALL-UNNAMED"
                         "-Dsun.java2d.metal=false"]

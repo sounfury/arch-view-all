@@ -1,3 +1,6 @@
+# 职责：读取脚本源码（Python），找出模块、导入关系和抽象类，不执行目标项目的代码。
+# 核心入口：主分析流程（main），分析结果通过标准输出交给调用方。
+
 """Static Python dependency discovery. Never imports or executes project code."""
 import ast
 import json

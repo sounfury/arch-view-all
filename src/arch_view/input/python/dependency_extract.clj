@@ -1,3 +1,6 @@
+;; 职责：调用脚本语言（Python）的源码分析程序，把返回的数据整理为统一的模块关系图。
+;; 核心入口：构建模块关系图（build-module-graph）。
+
 (ns arch-view.input.python.dependency-extract
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]

@@ -1,3 +1,6 @@
+;; 职责：按当前浏览的软件包汇总模块和依赖，让架构图能够逐层展开到文件。
+;; 核心入口：生成当前层的架构视图（view-architecture）。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.domain.architecture-projection
   (:require [clojure.string :as str]

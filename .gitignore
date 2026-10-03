@@ -1,9 +1,15 @@
+# 版本控制配置：忽略构建产物、临时文件和浏览器验收记录。
 .cpcache/
+.playwright-cli/
 target/
 examples/
 __pycache__/
 *.pyc
-bin/
+bin/*
+!bin/arch-view
+!bin/arch-view.ps1
+!bin/arch-view.cmd
+!bin/install.ps1
 
 .env
 .env.local

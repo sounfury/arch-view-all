@@ -1,3 +1,5 @@
+;; 测试：检查项目语言识别和 Java 源码目录发现。
+
 (ns arch-view.input.project-discovery-spec
   (:require [arch-view.input.project-discovery :as sut]
             [arch-view.input.languages :as languages]

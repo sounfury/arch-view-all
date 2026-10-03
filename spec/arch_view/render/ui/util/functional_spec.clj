@@ -1,3 +1,5 @@
+;; 回归测试：检查桌面文字、布局和依赖筛选工具是否符合已有行为。
+
 (ns arch-view.render.ui.util.functional-spec
   (:require [arch-view.render.ui.util.functional :as sut]
             [speclj.core :refer :all]))

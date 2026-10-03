@@ -1,3 +1,5 @@
+;; 回归测试：检查软件包分组、逐层展开和依赖汇总是否符合已有行为。
+
 (ns arch-view.domain.architecture-projection-spec
   (:require [arch-view.domain.architecture-projection :as sut]
             [speclj.core :refer :all]))

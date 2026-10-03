@@ -1,3 +1,5 @@
+;; 验收工具：打开真实桌面窗口，反复调整窗口尺寸并保存截图，用于发现绘制或缩放问题。
+
 (ns arch-view.ui-smoke
   "Optional desktop regression: resize a real window and save a completed frame."
   (:require [arch-view.core :as core]

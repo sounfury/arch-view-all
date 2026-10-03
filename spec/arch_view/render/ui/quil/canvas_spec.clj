@@ -1,3 +1,5 @@
+;; 回归测试：检查桌面模块框、工具栏及依赖说明的绘制是否符合已有行为。
+
 (ns arch-view.render.ui.quil.canvas-spec
   (:require [arch-view.render.ui.quil.canvas :as sut]
             [speclj.core :refer :all]))

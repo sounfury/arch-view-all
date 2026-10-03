@@ -1,3 +1,6 @@
+;; 职责：读取 Java 源码中的类型声明和实际类型引用，生成模块之间的依赖关系。
+;; 核心入口：构建模块关系图（build-module-graph）；不执行目标代码。
+
 (ns arch-view.input.java.dependency-extract
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
@@ -8,6 +11,20 @@
            [javax.tools ToolProvider Diagnostic Diagnostic$Kind DiagnosticCollector
             JavaCompiler StandardJavaFileManager StandardLocation]
            [java.nio.charset StandardCharsets]))
+
+(declare ^:private source-files ^:private analyze-files)
+
+(defn build-module-graph [project-path source-paths]
+  (let [compiler (ToolProvider/getSystemJavaCompiler)
+        files (source-files project-path source-paths)]
+    (when-not compiler
+      (throw (ex-info "Java analysis requires a full JDK (jdk.compiler); run the viewer with a JDK, not a JRE."
+                      {:language :java})))
+    (if (seq files)
+      (analyze-files compiler files)
+      (merge (graph/make-graph #{} #{}) {:abstract-modules #{} :module->source-file {}}))))
+
+;; ===== 私有方法 =====
 
 (def ^:private ignored-directories
   #{"target" "build" "out" "dist" "node_modules"})
@@ -109,13 +126,3 @@
         (merge (graph/make-graph nodes (mapcat #(type-edges trees nodes %) types))
                {:abstract-modules (set (map :name (filter abstract-type? types)))
                 :module->source-file index})))))
-
-(defn build-module-graph [project-path source-paths]
-  (let [compiler (ToolProvider/getSystemJavaCompiler)
-        files (source-files project-path source-paths)]
-    (when-not compiler
-      (throw (ex-info "Java analysis requires a full JDK (jdk.compiler); run the viewer with a JDK, not a JRE."
-                      {:language :java})))
-    (if (seq files)
-      (analyze-files compiler files)
-      (merge (graph/make-graph #{} #{}) {:abstract-modules #{} :module->source-file {}}))))

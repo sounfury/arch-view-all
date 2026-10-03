@@ -1,3 +1,5 @@
+;; 回归测试：检查模块名称缩写、长标题拆分和文字位置是否符合已有行为。
+
 (ns arch-view.render.ui.util.labels-spec
   (:require [arch-view.render.ui.util.labels :as sut]
             [speclj.core :refer :all]))

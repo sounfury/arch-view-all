@@ -1,3 +1,6 @@
+;; 职责：区分普通模块和抽象模块，为每条依赖标注对应类型。
+;; 核心入口：标注依赖类型（classify-edges）。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.model.classify)
 

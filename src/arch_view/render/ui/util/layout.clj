@@ -1,3 +1,6 @@
+;; 职责：计算桌面架构图中模块框、标题和依赖线的位置，尽量减少重叠和交叉。
+;; 核心入口：生成可绘制的场景数据（build-scene）。
+
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.util.layout
   (:require [clojure.string :as str]

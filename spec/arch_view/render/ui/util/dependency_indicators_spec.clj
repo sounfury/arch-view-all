@@ -1,3 +1,5 @@
+;; 回归测试：检查依赖三角标记、循环提示和悬浮详情是否符合已有行为。
+
 (ns arch-view.render.ui.util.dependency-indicators-spec
   (:require [arch-view.render.ui.util.dependency-indicators :as sut]
             [quil.core :as q]

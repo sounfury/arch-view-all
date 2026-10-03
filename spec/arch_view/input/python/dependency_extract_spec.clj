@@ -1,3 +1,5 @@
+;; 回归测试：检查脚本项目（Python）的扫描、依赖提取和错误提示是否符合已有行为。
+
 (ns arch-view.input.python.dependency-extract-spec
   (:require [arch-view.core :as core]
             [arch-view.input.python.dependency-extract :as sut]

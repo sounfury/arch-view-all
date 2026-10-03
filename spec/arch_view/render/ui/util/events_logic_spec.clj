@@ -1,3 +1,5 @@
+;; 回归测试：检查缩放、滚动坐标和按键判断工具是否符合已有行为。
+
 (ns arch-view.render.ui.util.events-logic-spec
   (:require [arch-view.render.ui.util.events-logic :as sut]
             [speclj.core :refer :all]))
