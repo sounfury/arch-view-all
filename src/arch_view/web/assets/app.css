@@ -119,6 +119,7 @@ h2 { font-size:19px; font-weight:600; margin:5px 0 0; line-height:1.4; }
 .icon-button { display:inline-grid; place-items:center; border:1px solid #e2e8db; border-radius:5px; background:#fff; color:#7d9370; width:31px; height:31px; padding:0; }
 .icon-button .icon { width:16px; height:16px; }
 .icon-button:hover { background:#f3f7ed; color:#365b33; }
+.icon-button:disabled { opacity:.4; cursor:default; background:#fff; color:#7d9370; }
 .map-tools>span { font:10px var(--mono); min-width:36px; text-align:center; color:#94a287; }
 .fit-button { margin-left:5px; }
 .map-kind-row { padding:0 24px 13px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -192,7 +193,6 @@ button.node.cyclic .node-symbol { color:var(--orange); }
 .node-bottom .implementation-status { font-size:9px; padding:2px 5px; }
 
 /* Mermaid 节点与页面共用视觉语汇，文字不会受到 HTML 卡片样式干扰。 */
-.map-world.flow-world { margin-inline:auto; }
 .map-world.flow-world>svg { pointer-events:auto; position:relative; display:block; max-width:none; }
 .map-world.flow-world>svg text { font-family:var(--body); font-size:15px; fill:#5b7550; }
 .flow-world g.node { cursor:pointer; transition:opacity .15s; }
@@ -366,6 +366,7 @@ button.node.cyclic .node-symbol { color:var(--orange); }
   .metrics { margin-bottom:19px; }
   .metrics>div,.metrics>button { padding:12px 14px; }
   .panel-heading { padding:19px 17px 15px; }
+  .panel-heading { flex-wrap:wrap; }
   .panel-heading h2 { font-size:18px; }
   .map-kind-row { padding:0 17px 13px; }
   .map-kind-row>span { flex-basis:100%; text-align:left; font-size:9px; }

@@ -1,3 +1,0 @@
-# 版本控制配置：为命令启动脚本保留各自平台需要的换行格式。
-bin/arch-view text eol=lf
-bin/arch-view.cmd text eol=crlf

@@ -7,10 +7,15 @@ param(
 $ErrorActionPreference = 'Stop'
 $archViewRoot = Split-Path -Parent $PSScriptRoot
 $archViewLauncher = Join-Path $PSScriptRoot 'arch-view.ps1'
-foreach ($requiredFile in @('src\arch_view\cli.clj', 'ARCHITECTURE_TEMPLATE.md', 'target\test-runtime\clojure.jar')) {
+foreach ($requiredFile in @('src\arch_view\cli.clj', 'ARCHITECTURE_TEMPLATE.md', '.env.example', 'target\test-runtime\clojure.jar')) {
     if (-not (Test-Path -LiteralPath (Join-Path $archViewRoot $requiredFile) -PathType Leaf)) {
         throw "工具目录缺少文件：$requiredFile；请先准备完整的工具文件和运行依赖。"
     }
+}
+
+$configPath = Join-Path $archViewRoot '.env'
+if (-not (Test-Path -LiteralPath $configPath)) {
+    Copy-Item -LiteralPath (Join-Path $archViewRoot '.env.example') -Destination $configPath
 }
 
 $Destination = [System.IO.Path]::GetFullPath($Destination)
@@ -32,8 +37,14 @@ powershell.exe -NoProfile -File "%~dp0arch-view.ps1" %*
 exit /b %errorlevel%
 '@
 $commandShim = $commandShim.Replace("`r`n", "`n").Replace("`n", "`r`n")
+$shellShim = @'
+#!/usr/bin/env sh
+# 职责：从 Git Bash 等 POSIX shell 调用已安装的架构工具，并原样传递命令参数。
+exec powershell.exe -NoProfile -File '__LAUNCHER__' "$@"
+'@
+$shellShim = $shellShim.Replace('__LAUNCHER__', $archViewLauncher.Replace("'", "'''")).Replace("`r`n", "`n")
 
-foreach ($name in @('arch-view.ps1', 'arch-view.cmd')) {
+foreach ($name in @('arch-view.ps1', 'arch-view.cmd', 'arch-view')) {
     $target = Join-Path $Destination $name
     if ((Test-Path -LiteralPath $target -PathType Leaf) -and -not (Test-Path -LiteralPath ($target + '.bak'))) {
         Copy-Item -LiteralPath $target -Destination ($target + '.bak')
@@ -41,8 +52,10 @@ foreach ($name in @('arch-view.ps1', 'arch-view.cmd')) {
 }
 [System.IO.File]::WriteAllText((Join-Path $Destination 'arch-view.ps1'), $powershellShim, [System.Text.UTF8Encoding]::new($true))
 [System.IO.File]::WriteAllText((Join-Path $Destination 'arch-view.cmd'), $commandShim, [System.Text.UTF8Encoding]::new($false))
+[System.IO.File]::WriteAllText((Join-Path $Destination 'arch-view'), $shellShim, [System.Text.UTF8Encoding]::new($false))
 Write-Output "已安装命令入口：$Destination"
 Write-Output "工具目录：$archViewRoot"
+Write-Output "全局配置：$configPath"
 if (-not (($env:Path -split ';').TrimEnd('\') -contains $Destination.TrimEnd('\'))) {
     Write-Output "请将 $Destination 加入你的用户 PATH 后再使用 arch-view。"
 }

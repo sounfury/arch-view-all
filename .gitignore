@@ -6,9 +6,7 @@ examples/
 __pycache__/
 *.pyc
 bin/*
-!bin/arch-view
 !bin/arch-view.ps1
-!bin/arch-view.cmd
 !bin/install.ps1
 
 .env

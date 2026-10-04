@@ -4,6 +4,7 @@
 (ns arch-view.web.server
   "Independent localhost Web UI. The existing desktop entry point is unchanged."
   (:require [arch-view.core :as core]
+            [arch-view.config :as config]
             [arch-view.web.json :as json]
             [arch-view.web.model :as model]
             [arch-view.web.documents :as documents]
@@ -90,6 +91,8 @@
   (str "用法: clj -M:web [--project-path <目录>] [--language auto|clojure|python|kotlin|java]\n"
        "  --source-path <目录>        源码目录，可重复指定\n"
        "  --architecture-doc <文件>  可选：项目内已有的 Markdown 说明\n"
+       "  --env-file <文件>          配置文件，默认读取工具安装目录的 .env\n"
+       "  --edge-scope <focus|all>    默认连线范围：当前模块或全部模块\n"
        "  --in-edn <文件>            加载导出的架构（源码按 --project-path 定位）\n"
        "  --port <端口>              默认 7331，被占用时自动换端口；0 自动选择\n"
        "  --no-browser               不自动打开浏览器\n"
@@ -99,12 +102,16 @@
 
 (defn- parse-options [args]
   (loop [args (seq args) opts {:project-path "."}]
-    (if-not args opts
+    (if-not args
+      (if (:help opts) opts
+        ;; 与桌面版共用全局配置，命令行参数覆盖配置；项目路径已有默认值，不受配置影响。
+        (let [opts (merge (config/defaults (:env-file opts) (into {} (System/getenv))) opts)]
+          (assoc opts :edge-scope (config/parse-edge-scope (or (:edge-scope opts) "focus")))))
       (let [[arg value] args]
         (cond
           (= arg "--help") (recur (next args) (assoc opts :help true))
           (= arg "--no-browser") (recur (next args) (assoc opts :no-browser true))
-          (contains? #{"--project-path" "--language" "--source-path" "--architecture-doc" "--in-edn" "--port"} arg)
+          (contains? #{"--project-path" "--language" "--source-path" "--architecture-doc" "--in-edn" "--port" "--env-file" "--edge-scope"} arg)
           (do
             (when (or (nil? value) (str/starts-with? value "--"))
               (throw (ex-info (str "缺少参数值: " arg) {})))

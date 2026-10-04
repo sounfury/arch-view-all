@@ -175,7 +175,7 @@ async function expandSinglePackages(view, path, request) {
   }
   return { view, path };
 }
-async function navigate(path, mode = 'explore', selectedId = null) {
+async function navigate(path, mode = 'explore', selectedId = null, { expand = true } = {}) {
   const request = ++state.request;
   const fromOverview = !path.length && mode === 'overview';
   $('#analysis-state').textContent = '正在读取结构…';
@@ -190,7 +190,7 @@ async function navigate(path, mode = 'explore', selectedId = null) {
       state.navigationView = navigation.view; state.navigationPath = navigation.path;
     }
     // 明确定位源码时保留目标所在层，避免自动展开把选中节点跳过去。
-    if (!selectedId) {
+    if (!selectedId && expand) {
       const expanded = atRoot ? { view: state.navigationView, path: state.navigationPath }
         : await expandSinglePackages(view, path, request);
       if (!expanded || request !== state.request) return;
@@ -222,7 +222,12 @@ async function navigate(path, mode = 'explore', selectedId = null) {
 }
 function renderBreadcrumbs() {
   const nav = $('#breadcrumbs'); nav.replaceChildren(button('项目总览', '', () => navigate([], 'overview')));
-  state.path.forEach((part, index) => { nav.append(element('i', '', '/'), button(part, '', () => navigate(state.path.slice(0, index + 1)))); });
+  state.path.forEach((part, index) => { nav.append(element('i', '', '/'), button(part, '', () => navigate(state.path.slice(0, index + 1), 'explore', null, { expand: false }))); });
+}
+function navigateUp() {
+  if ($('#map-back').disabled) return;
+  // 返回时保留父层级，避免单子包自动展开又进入刚离开的层级。
+  navigate(state.path.slice(0, -1), 'explore', null, { expand: false });
 }
 function renderRootNav() {
   const view = state.navigationView || state.rootView, path = state.navigationPath;
@@ -371,6 +376,7 @@ function statusChoices(role) {
 
 function renderDiagramControls() {
   const flow = state.diagramKind === 'flow';
+  $('#map-back').disabled = flow || state.path.length <= state.navigationPath.length;
   $('#edge-scope-label').hidden = flow;
   $('#analysis-state').textContent = flow ? '文档数据流' : '源码静态依赖';
   $('#flow-view').disabled = !state.flows.length;
@@ -546,10 +552,12 @@ function focusSelectedNode() {
   const card = $$('button.node').find(el => el.dataset.node === state.selected?.id);
   if (!card) return;
   const position = state.positions.get(state.selected.id), viewport = $('#map-viewport');
-  state.pan = { x: 0, y: 0 }; applyZoom();
-  if (position) viewport.scrollTo({
-    left: Math.max(0, (position.x + CARD.width / 2) * state.zoom - viewport.clientWidth / 2),
-    top: Math.max(0, (position.y + CARD.height / 2) * state.zoom - viewport.clientHeight / 2)
+  const cardBox = card.getBoundingClientRect(), viewBox = viewport.getBoundingClientRect();
+  const visible = cardBox.left >= viewBox.left && cardBox.right <= viewBox.right && cardBox.top >= viewBox.top && cardBox.bottom <= viewBox.bottom;
+  // 保留居中用的平移，只在卡片超出视野时滚动过去，避免选中后整张图跳回左上角。
+  if (position && !visible) viewport.scrollTo({
+    left: Math.max(0, state.pan.x + (position.x + CARD.width / 2) * state.zoom - viewport.clientWidth / 2),
+    top: Math.max(0, state.pan.y + (position.y + CARD.height / 2) * state.zoom - viewport.clientHeight / 2)
   });
   card.focus({ preventScroll: true });
 }
@@ -658,13 +666,19 @@ function applyZoom() {
 function zoomBy(delta) { state.zoom = Math.min(1.8, Math.max(.15, state.zoom + delta)); applyZoom(); }
 function fitMap() {
   state.pan = { x: 0, y: 0 };
+  applyZoom();
   const viewport = $('#map-viewport');
   const widthFit = (viewport.clientWidth - 12) / state.world.width;
   const narrow = viewport.clientWidth < 480;
-  const heightFit = state.diagramKind !== 'flow' ? 1 : (viewport.clientHeight - 12) / state.world.height;
+  const heightFit = (viewport.clientHeight - 12) / state.world.height;
   state.zoom = Math.min(1, Math.max(.15, Math.min(widthFit, heightFit)));
   if (narrow && state.diagramKind === 'flow') state.zoom = Math.max(.65, state.zoom);
-  applyZoom(); $('#map-viewport').scrollTo(0, 0);
+  applyZoom();
+  const width = state.world.width * state.zoom, height = state.world.height * state.zoom;
+  state.pan = { x: Math.max(0, (viewport.clientWidth - width) / 2), y: Math.max(0, (viewport.clientHeight - height) / 2) };
+  applyZoom();
+  // 小图通过平移居中；受最小缩放限制的大图滚动到中心。
+  viewport.scrollTo(Math.max(0, (width - viewport.clientWidth) / 2), Math.max(0, (height - viewport.clientHeight) / 2));
 }
 
 function setMapFullscreen(active) {
@@ -794,6 +808,7 @@ for (const [id, kind] of [['code-view', 'code'], ['flow-view', 'flow']]) $('#' +
 $('#flow-select').addEventListener('change', event => { state.flowIndex = Number(event.target.value); state.selectedFlow = null; renderMap(); renderDetail(); });
 $('#show-edges').addEventListener('change', applyHighlight);
 $('#edge-scope').addEventListener('change', applyHighlight);
+$('#map-back').addEventListener('click', navigateUp);
 $('#zoom-in').addEventListener('click', () => zoomBy(.1)); $('#zoom-out').addEventListener('click', () => zoomBy(-.1)); $('#zoom-fit').addEventListener('click', fitMap);
 $('#map-fullscreen').addEventListener('click', toggleMapFullscreen);
 $('#map-viewport').addEventListener('pointerdown', beginCanvasDrag);
@@ -835,6 +850,7 @@ new ResizeObserver(() => {
 (async function initialize() {
   try {
     state.project = await api('/api/project'); updateProject();
+    $('#edge-scope').value = state.project.edgeScope || 'focus';
     const doc = state.project.documents.find(d => d.scope === 'project'); await loadDocument(doc?.id || '');
     await navigate([], 'overview');
   } catch (error) { $('#hero-summary').textContent = `加载失败：${error.message}`; toast(error.message); }

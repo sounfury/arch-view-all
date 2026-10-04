@@ -102,13 +102,16 @@ arch-view scan . --out architecture.edn   # 只分析、可导出快照
 
 ## 配置（`.env`）
 
-可在目标项目目录放 `.env`：
+全局偏好放在工具安装目录的 `.env`，安装脚本会从 `.env.example` 复制一份；不读取被分析项目自己的 `.env`。每个项目不同的设置用命令行参数传入。
 
 ```dotenv
 ARCH_VIEW_LANGUAGE=auto
 ARCH_VIEW_ZOOM=1.2
 ARCH_VIEW_UI_SCALE=1.25
 ARCH_VIEW_INCLUDE_TESTS=false
+ARCH_VIEW_EDGE_SCOPE=focus
 ```
+
+网页的默认连线范围支持 `focus`（当前模块，默认）和 `all`（全部模块），页面下拉框仍可随时切换。也可通过 `--env-file <文件>` 换用其它配置文件。优先级为 `--edge-scope` 参数 > 进程环境变量 > 配置文件 > 内置默认值。例如：`arch-view serve . --edge-scope all`。
 
 更多参数见 `arch-view --help` 与 `arch-view serve --help`。

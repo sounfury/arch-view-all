@@ -14,7 +14,7 @@
     {:architecture architecture :root root :opts opts
      :documents (documents/discover root architecture (:architecture-doc opts))}))
 
-(defn project-data [{:keys [architecture root documents can-reanalyze]}]
+(defn project-data [{:keys [architecture root documents can-reanalyze opts]}]
   {:name (.getName (.toFile ^java.nio.file.Path root))
    :root (str root)
    :language (get-in architecture [:guidance :language] :clojure)
@@ -23,6 +23,7 @@
    :moduleCount (count (get-in architecture [:graph :nodes]))
    :dependencyCount (count (get-in architecture [:graph :edges]))
    :canReanalyze (boolean can-reanalyze)
+   :edgeScope (get opts :edge-scope "focus")
    :documents documents})
 
 (defn view-data [{:keys [architecture root documents]} path]

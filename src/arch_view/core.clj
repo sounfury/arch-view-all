@@ -23,7 +23,7 @@
    "Usage: clj -M:run [options]\n"
    "\n"
    "Options:\n"
-   "  --env-file <file>          Load defaults from this file (default: .env in working directory).\n"
+   "  --env-file <file>          Load defaults from this file (default: .env in the arch-view install directory).\n"
    "  --zoom <number>            Initial diagram and label zoom (default: 1.0).\n"
    "  --ui-scale <number>        UI and font scaling, e.g. 1.25.\n"
    "  --include-tests            Include Python test files (excluded by default).\n"

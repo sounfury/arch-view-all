@@ -51,6 +51,8 @@
     "serve" (str "启动本机网页工作台：\n" (common-help)
                  "  --port <端口>           默认 7331，被占用时自动换端口；0 自动分配\n"
                  "  --architecture-doc <文件>  读取已有的架构说明\n"
+                 "  --env-file <文件>       配置文件，默认读取工具安装目录的 .env\n"
+                 "  --edge-scope <focus|all> 默认连线范围：当前模块或全部模块\n"
                  "  --no-browser            启动服务但不自动打开浏览器\n"
                  "就绪后输出地址和进程号（PID），服务持续占用前台；按 Ctrl+C 停止。\n"
                  "自动化调用请使用持久或后台进程，并添加 --no-browser。\n")
@@ -58,7 +60,7 @@
     (str (if (= command "scan") "分析源码，不打开窗口：\n" "启动桌面窗口：\n")
          (common-help)
          "  --out <文件>            导出架构数据（EDN）\n"
-         "  --env-file <文件>       指定配置文件，默认读取当前目录的 .env\n"
+         "  --env-file <文件>       指定配置文件，默认读取工具安装目录的 .env\n"
          "  --include-tests / --exclude-tests  包含或排除 Python 测试\n"
          "  --zoom <数值>           架构图初始缩放\n"
          "  --ui-scale <数值>       桌面界面缩放\n"
@@ -78,7 +80,7 @@
 
 (defn- validate-options! [command args]
   (let [values (case command
-                 "serve" (into common-value-options #{"--port" "--architecture-doc"})
+                 "serve" (into common-value-options #{"--port" "--architecture-doc" "--env-file" "--edge-scope"})
                  "init" #{"--project-path"}
                  (into common-value-options desktop-value-options))
         flags (case command

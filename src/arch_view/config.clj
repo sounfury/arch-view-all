@@ -18,6 +18,12 @@
       (throw (ex-info "UI scale must be a positive finite number." {:value value})))
     (str value)))
 
+(defn parse-edge-scope [value]
+  (let [scope (str/lower-case (str/trim (str value)))]
+    (when-not (#{"focus" "all"} scope)
+      (throw (ex-info "连线范围只能是 focus（当前模块）或 all（全部模块）。" {:value value})))
+    scope))
+
 (defn read-env [path required?]
   (let [file (io/file path)]
     (when (and required? (not (.isFile file)))
@@ -38,8 +44,13 @@
                       (throw (ex-info (str "Invalid env assignment in " path) {}))))))
               {} (str/split-lines (slurp file))))))
 
+(defn default-env-file
+  "全局配置放在工具安装目录，不读取被分析项目自己的 .env。"
+  []
+  (io/file (System/getProperty "arch-view.home" (System/getProperty "user.dir")) ".env"))
+
 (defn defaults [env-file environment]
-  (let [values (merge (read-env (or env-file ".env") (some? env-file)) environment)
+  (let [values (merge (read-env (or env-file (default-env-file)) (some? env-file)) environment)
         specs {"ARCH_VIEW_PROJECT_PATH" [:project-path identity]
                "ARCH_VIEW_LANGUAGE" [:language identity]
                "ARCH_VIEW_SOURCE_PATHS" [:source-paths #(vec (remove str/blank? (map str/trim (str/split % #";"))))]
@@ -47,6 +58,7 @@
                "ARCH_VIEW_INCLUDE_TESTS" [:include-tests parse-boolean]
                "ARCH_VIEW_UI_SCALE" [:ui-scale parse-scale]
                "ARCH_VIEW_ZOOM" [:zoom #(Double/parseDouble (parse-scale %))]
+               "ARCH_VIEW_EDGE_SCOPE" [:edge-scope parse-edge-scope]
                "ARCH_VIEW_PYTHON" [:python identity]
                "ARCH_VIEW_OUT" [:out identity]}]
     (reduce-kv (fn [opts key [option parse]]
