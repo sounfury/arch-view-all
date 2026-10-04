@@ -5,7 +5,7 @@ set -euo pipefail
 destination="${1:-$HOME/.local/bin}"
 arch_view_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-for required_file in src/arch_view/cli.clj ARCHITECTURE_TEMPLATE.md .env.example target/test-runtime/clojure.jar; do
+for required_file in src/arch_view/cli.clj .env.example target/test-runtime/clojure.jar; do
   if [ ! -f "$arch_view_root/$required_file" ]; then
     echo "工具目录缺少文件：$required_file；请先准备完整的工具文件和运行依赖。" >&2
     exit 1

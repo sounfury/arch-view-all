@@ -7,7 +7,7 @@
 ### 老项目：根据现有项目整理架构
 
 ```text
-请阅读本项目根目录的 ARCHITECTURE_TEMPLATE.md，并根据现有项目生成或更新根目录的 ARCHITECTURE.md。
+请阅读 arch-view 技能的架构模板（references/architecture-template.md），并根据现有项目生成或更新根目录的 ARCHITECTURE.md。
 
 目标：让第一次接触项目的人尽快理解项目背景、核心子系统和主要数据流；文档必须简短，便于长期维护。
 
@@ -28,7 +28,7 @@
 ### 新项目：在编码前形成架构草案
 
 ```text
-请阅读本项目根目录的 ARCHITECTURE_TEMPLATE.md，根据我提供的需求和约束，生成根目录的 ARCHITECTURE.md，作为后续编码使用的宏观架构草案。
+请阅读 arch-view 技能的架构模板（references/architecture-template.md），根据我提供的需求和约束，生成根目录的 ARCHITECTURE.md，作为后续编码使用的宏观架构草案。
 
 目标：先明确项目要解决什么问题、核心职责如何划分、数据如何流动。设计应与当前需求规模相称，保持简单，方便实现后调整。
 

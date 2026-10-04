@@ -336,19 +336,14 @@
             (check! (= (:graph architecture)
                        (:graph (edn/read-string (slurp (io/file root name) :encoding "UTF-8"))))
                     "新旧桌面参数与 scan 导出的依赖必须一致")))
-        (check! (= 0 (:status (run-cli root ["init" "."]))) "必须能从工具安装目录复制模板")
-        (let [template (slurp "ARCHITECTURE_TEMPLATE.md" :encoding "UTF-8")]
-          (check! (= template (slurp (io/file root "ARCHITECTURE_TEMPLATE.md") :encoding "UTF-8"))
-                  "架构模板必须完整复制")
+        (let [template (slurp "skills/arch-view/references/architecture-template.md" :encoding "UTF-8")]
           (check! (not (str/includes? template "给 AI 的架构文档生成提示词"))
                   "模板只保留架构格式，生成提示词必须放在技能中")
           (check! (.isFile (io/file "skills/arch-view/references/architecture-prompts.md"))
                   "新老项目生成提示词必须位于技能参考文件"))
-        (spit (io/file root "ARCHITECTURE_TEMPLATE.md") "用户修改过的模板" :encoding "UTF-8")
-        (check! (= 1 (:status (run-cli root ["init" "."]))) "已有模板时必须拒绝覆盖")
-        (check! (= "用户修改过的模板" (slurp (io/file root "ARCHITECTURE_TEMPLATE.md") :encoding "UTF-8"))
-                "重复初始化不能破坏用户文件")
-        (doseq [args [["serve" "--unknown"] ["scan" "--project-path"] ["unknown-command"]]]
+        (check! (not (.exists (io/file root "ARCHITECTURE_TEMPLATE.md")))
+                "模板只随技能提供，命令不能向用户项目写入模板")
+        (doseq [args [["serve" "--unknown"] ["scan" "--project-path"] ["unknown-command"] ["init" "."]]]
           (check! (= 1 (:status (run-cli root args))) "错误命令必须返回失败状态"))
         (check! (contains-text? (run-cli root ["serve" "--help"]) "网页工作台")
                 "网页子命令必须提供中文帮助"))))

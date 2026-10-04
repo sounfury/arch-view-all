@@ -38,7 +38,7 @@
 $CODEX_HOME/skills/arch-view
 ```
 
-技能会先 `arch-view init .` 补模板（已有则跳过），再生成或轻量校对 `ARCHITECTURE.md`，最后启动网页。文档与代码不一致时只指出差异，由你决定改文档还是改代码。
+技能自带架构模板，按模板生成或轻量校对 `ARCHITECTURE.md`，不会在项目里留下模板文件，最后启动网页。文档与代码不一致时只指出差异，由你决定改文档还是改代码。
 
 ---
 
@@ -70,7 +70,6 @@ arch-view serve . --architecture-doc docs/design.md
 
 ```bash
 arch-view desktop .                 # 桌面窗口（Quil）
-arch-view init .                    # 复制 ARCHITECTURE_TEMPLATE.md
 arch-view scan . --out architecture.edn   # 只分析、可导出快照
 ```
 

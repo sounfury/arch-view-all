@@ -41,9 +41,9 @@ flowchart TD
 ### cli · 统一命令入口（`src/arch_view/cli.clj`）
 
 - **实现状态**：已完成。
-- **职责**：接收 `arch-view` 命令，检查参数，分派到网页服务、桌面窗口或无界面分析；也可将架构模板复制到目标项目，新老项目的 AI 生成提示词由技能提供。
+- **职责**：接收 `arch-view` 命令，检查参数，分派到网页服务、桌面窗口或无界面分析。架构模板和新老项目的 AI 生成提示词都由技能提供，不复制到用户项目。
 - **入口与安装**：Windows 上 `bin/arch-view.ps1` 是唯一启动器，安装脚本（`bin/install.ps1`）在用户目录生成 PowerShell、命令提示符和 Git Bash 三种入口，都转到该启动器；Linux/macOS 安装脚本（`bin/install.sh`）直接生成写有工具目录的 `~/.local/bin/arch-view`。两者都调用这个源码模块，运行时保留用户所在的项目目录。
-- **命令**：`serve` 打开网页，`desktop` 打开桌面，`scan` 分析与导出，`init` 复制模板；直接传入旧参数仍走原桌面入口。
+- **命令**：`serve` 打开网页，`desktop` 打开桌面，`scan` 分析与导出；直接传入旧参数仍走原桌面入口。
 
 [探索统一命令入口](#module=cli)
 
@@ -181,7 +181,6 @@ flowchart TD
 | **通过统一命令打开网页** | `arch-view serve .` |
 | **通过统一命令打开桌面** | `arch-view desktop .` |
 | **分析并导出架构数据** | `arch-view scan . --out architecture.edn` |
-| **复制架构模板** | `arch-view init .` |
 | **启动 Web 可视化工作台（推荐）** | `clj -M:web --project-path .` |
 | **Web 端指定 Python 项目与源码目录** | `clj -M:web --language python --project-path /path/to/py --source-path src` |
 | **Web 端加载已有架构说明文档** | `clj -M:web --project-path . --architecture-doc docs/design.md` |

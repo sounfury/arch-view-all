@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $archViewRoot = Split-Path -Parent $PSScriptRoot
 $archViewLauncher = Join-Path $PSScriptRoot 'arch-view.ps1'
-foreach ($requiredFile in @('src\arch_view\cli.clj', 'ARCHITECTURE_TEMPLATE.md', '.env.example', 'target\test-runtime\clojure.jar')) {
+foreach ($requiredFile in @('src\arch_view\cli.clj', '.env.example', 'target\test-runtime\clojure.jar')) {
     if (-not (Test-Path -LiteralPath (Join-Path $archViewRoot $requiredFile) -PathType Leaf)) {
         throw "工具目录缺少文件：$requiredFile；请先准备完整的工具文件和运行依赖。"
     }

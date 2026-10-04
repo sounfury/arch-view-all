@@ -1,13 +1,11 @@
-;; 职责：统一处理 arch-view 命令，选择网页、桌面或无界面分析，并向项目复制架构模板。
+;; 职责：统一处理 arch-view 命令，选择网页、桌面或无界面分析。
 ;; 核心入口：主启动函数（-main）；保留原有参数直接启动桌面的用法。
 
 (ns arch-view.cli
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str])
-  (:import [java.nio.file Files]))
+  (:require [clojure.string :as str]))
 
 (declare ^:private dispatch! ^:private normalize-project-args ^:private validate-options!
-         ^:private initialize-template! ^:private common-help ^:private command-help)
+         ^:private common-help ^:private command-help)
 
 (defn usage-summary
   ([] (usage-summary nil))
@@ -18,12 +16,10 @@
                  "  serve     启动网页工作台，默认自动打开浏览器\n"
                  "  desktop   启动桌面架构窗口\n"
                  "  scan      分析源码，可导出架构数据，不打开窗口\n"
-                 "  init      复制架构模板，不覆盖已有文件\n"
                  "  help      查看帮助\n\n"
                  "不传参数时显示帮助；仅传旧分析参数时仍启动桌面窗口。\n"
                  "示例：arch-view serve .\n"
                  "      arch-view scan . --out architecture.edn\n"
-                 "      arch-view init .\n"
                  "命令帮助：arch-view serve --help\n")))))
 
 (defn -main [& args]
@@ -35,7 +31,7 @@
 
 ;; ===== 私有方法 =====
 
-(def ^:private commands #{"serve" "desktop" "scan" "init"})
+(def ^:private commands #{"serve" "desktop" "scan"})
 (def ^:private common-value-options #{"--project-path" "--language" "--source-path" "--in-edn"})
 (def ^:private desktop-value-options #{"--env-file" "--zoom" "--ui-scale" "--out"})
 
@@ -65,9 +61,6 @@
          "  --zoom <数值>           架构图初始缩放\n"
          "  --ui-scale <数值>       桌面界面缩放\n"
          (when (= command "desktop") "  --gui / --no-gui         打开或关闭桌面窗口\n"))
-    "init" (str "向项目复制 ARCHITECTURE_TEMPLATE.md；新老项目的生成提示词由 arch-view 技能提供。\n"
-                "模板复制后按需生成 ARCHITECTURE.md，不修改源码或覆盖已有模板。\n"
-                "  --project-path <目录>   指定目标项目，默认当前目录\n")
     (throw (ex-info (str "未知命令：" command) {}))))
 
 (defn- normalize-project-args [args]
@@ -81,11 +74,9 @@
 (defn- validate-options! [command args]
   (let [values (case command
                  "serve" (into common-value-options #{"--port" "--architecture-doc" "--env-file" "--edge-scope"})
-                 "init" #{"--project-path"}
                  (into common-value-options desktop-value-options))
         flags (case command
                 "serve" #{"--no-browser"}
-                "init" #{}
                 "scan" #{"--include-tests" "--exclude-tests" "--no-gui"}
                 #{"--include-tests" "--exclude-tests" "--gui" "--no-gui"})]
     (loop [remaining (seq args)]
@@ -99,22 +90,6 @@
                 (throw (ex-info (str "缺少参数值：" option) {})))
               (recur (nnext remaining)))
             :else (throw (ex-info (str "当前命令不支持参数：" option "；可用 --help 查看帮助。") {}))))))))
-
-(defn- initialize-template! [args]
-  (let [project-path (or (second args) ".")
-        root (.getCanonicalFile (io/file project-path))
-        tool-root (System/getProperty "arch-view.home" (System/getProperty "user.dir"))
-        template (io/file tool-root "ARCHITECTURE_TEMPLATE.md")
-        target (io/file root "ARCHITECTURE_TEMPLATE.md")]
-    (when-not (.isDirectory root)
-      (throw (ex-info (str "项目目录不存在：" root) {})))
-    (when-not (.isFile template)
-      (throw (ex-info "工具安装目录中缺少 ARCHITECTURE_TEMPLATE.md，请检查安装是否完整。" {})))
-    (when (.exists target)
-      (throw (ex-info (str "模板已存在，未覆盖：" target) {})))
-    (Files/copy (.toPath template) (.toPath target) (make-array java.nio.file.CopyOption 0))
-    (println (str "已复制架构模板：" target))
-    (println "配合 arch-view 技能中的新老项目提示词，按需生成 ARCHITECTURE.md。")))
 
 (defn- dispatch! [args]
   (let [first-arg (first args)]
@@ -134,7 +109,6 @@
             (validate-options! command command-args)
             (case command
               "serve" (apply (requiring-resolve 'arch-view.web.server/-main) command-args)
-              "init" (initialize-template! command-args)
               "scan" (do
                        (println "正在分析源码，不打开窗口……")
                        (flush)
