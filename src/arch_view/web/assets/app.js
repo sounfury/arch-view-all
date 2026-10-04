@@ -411,7 +411,7 @@ function complexitySection(node) {
 }
 function renderComplexityToggle() {
   const control = $('#complexity-toggle'), { status, error, max, limit, count } = state.complexity;
-  // crap 不支持的语言（如 Clojure）分析结果为空，没有可切换的内容。
+  // crap 不支持的语言分析结果为空，没有可切换的内容。
   control.hidden = status === 'unavailable' || (status === 'ready' && !count);
   const label = status === 'running' ? '复杂度分析中…' : status === 'failed' ? '复杂度分析失败' : '复杂度';
   control.replaceChildren(icon(state.showComplexity ? 'eye' : 'eye-off'), element('span', '', label));
