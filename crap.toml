@@ -1,0 +1,8 @@
+[project]
+language = "clojure"
+exclude = []
+timeout = 300
+
+[gate]
+mode = "complexity"
+max_complexity = 12

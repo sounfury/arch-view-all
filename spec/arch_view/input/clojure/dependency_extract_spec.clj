@@ -1,7 +1,7 @@
 ;; 回归测试：检查源码中的模块、抽象声明和依赖提取是否符合已有行为。
 
-(ns arch-view.input.dependency-extract-spec
-  (:require [arch-view.input.dependency-extract :as sut]
+(ns arch-view.input.clojure.dependency-extract-spec
+  (:require [arch-view.input.clojure.dependency-extract :as sut]
             [speclj.core :refer :all]))
 
 (describe "dependency extraction"

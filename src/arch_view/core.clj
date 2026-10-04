@@ -66,47 +66,57 @@
       (assoc architecture
              :scene (render/build-scene architecture)))))
 
+;; 开关参数：参数名 -> [选项键 取值]。
+(def ^:private flag-options
+  {"--include-tests" [:include-tests true]
+   "--exclude-tests" [:include-tests false]
+   "--gui" [:no-gui false]
+   "--no-gui" [:no-gui true]
+   "--help" [:help true]})
+
+(def ^:private value-options
+  {"--env-file" :env-file
+   "--ui-scale" :ui-scale
+   "--zoom" :zoom
+   "--project-path" :project-path
+   "--language" :language
+   "--source-path" :source-paths
+   "--in-edn" :in-edn
+   "--out" :out})
+
+(defn- required-value [arg value]
+  (when (or (nil? value) (str/starts-with? value "--"))
+    (throw (ex-info (str "Missing value for " arg) {:option arg})))
+  value)
+
+(defn- parse-option-value [key-name value]
+  (case key-name
+    :language (languages/language-key value)
+    :ui-scale (config/parse-scale value)
+    :zoom (Double/parseDouble (config/parse-scale value))
+    value))
+
+(defn- assoc-value-option [opts key-name value]
+  (if (= key-name :source-paths)
+    (update opts key-name (fnil conj []) value)
+    (assoc opts key-name (parse-option-value key-name value))))
+
 (defn parse-args
   ([args] (parse-args args {}))
   ([args defaults]
-  (let [flag-handlers {"--include-tests" (fn [remaining opts] [(next remaining) (assoc opts :include-tests true)])
-                       "--exclude-tests" (fn [remaining opts] [(next remaining) (assoc opts :include-tests false)])
-                       "--gui" (fn [remaining opts] [(next remaining) (assoc opts :no-gui false)])
-                       "--help" (fn [remaining opts]
-                                  [(next remaining) (assoc opts :help true)])
-                       "--no-gui" (fn [remaining opts]
-                                    [(next remaining) (assoc opts :no-gui true)])}
-        value-handlers {"--env-file" :env-file
-                        "--ui-scale" :ui-scale
-                        "--zoom" :zoom
-                        "--project-path" :project-path
-                        "--language" :language
-                        "--source-path" :source-paths
-                        "--in-edn" :in-edn
-                        "--out" :out}]
-    (loop [remaining args
-           opts (merge {:project-path "." :in-edn nil :no-gui false :out nil :help false}
-                       (if (some #{"--source-path"} args) (dissoc defaults :source-paths) defaults))]
-      (if (empty? remaining)
-        opts
-        (let [arg (first remaining)]
-          (if-let [handle-flag (get flag-handlers arg)]
-            (let [[next-remaining next-opts] (handle-flag remaining opts)]
-              (recur next-remaining next-opts))
-            (if-let [key-name (get value-handlers arg)]
-              (let [value (second remaining)]
-                (when (or (nil? value) (str/starts-with? value "--"))
-                  (throw (ex-info (str "Missing value for " arg) {:option arg})))
-                (recur (nnext remaining)
-                       (if (= key-name :source-paths)
-                         (update opts key-name (fnil conj []) value)
-                         (assoc opts key-name (if (= key-name :language)
-                                                (languages/language-key value)
-                                                (case key-name
-                                                  :ui-scale (config/parse-scale value)
-                                                  :zoom (Double/parseDouble (config/parse-scale value))
-                                                  value))))))
-              (recur (next remaining) opts)))))))))
+   (loop [remaining args
+          opts (merge {:project-path "." :in-edn nil :no-gui false :out nil :help false}
+                      (if (some #{"--source-path"} args) (dissoc defaults :source-paths) defaults))]
+     (let [arg (first remaining)]
+       (cond
+         (empty? remaining) opts
+         (contains? flag-options arg)
+         (let [[key-name value] (flag-options arg)] (recur (next remaining) (assoc opts key-name value)))
+         (contains? value-options arg)
+         (recur (nnext remaining)
+                (assoc-value-option opts (value-options arg) (required-value arg (second remaining))))
+         ;; 不认识的参数沿用旧行为：跳过。
+         :else (recur (next remaining) opts))))))
 
 (defn exit-program!
   []

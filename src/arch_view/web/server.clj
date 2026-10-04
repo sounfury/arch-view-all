@@ -105,30 +105,41 @@
        "服务就绪后输出地址和进程号（PID），持续占用前台；Ctrl+C 停止。\n"
        "明确指定的端口被占用时提示错误；自动化调用使用持久或后台进程与 --no-browser。\n"))
 
+(def ^:private flag-options {"--help" :help "--no-browser" :no-browser})
+(def ^:private value-options
+  #{"--project-path" "--language" "--source-path" "--architecture-doc" "--in-edn" "--port" "--env-file"
+    "--edge-scope" "--crap" "--crap-command"})
+
+(defn- required-value [arg value]
+  (when (or (nil? value) (str/starts-with? value "--"))
+    (throw (ex-info (str "缺少参数值: " arg) {})))
+  value)
+
+(defn- parse-port [value]
+  (let [port (Integer/parseInt value)]
+    (when-not (<= 0 port 65535) (throw (ex-info "端口范围为 0–65535" {})))
+    port))
+
+(defn- assoc-value-option [opts arg value]
+  (case arg
+    "--source-path" (update opts :source-paths (fnil conj []) value)
+    "--port" (assoc opts :port (parse-port value))
+    (assoc opts (keyword (subs arg 2)) value)))
+
+(defn- with-config-defaults [opts]
+  ;; 与桌面版共用全局配置，命令行参数覆盖配置；项目路径已有默认值，不受配置影响。
+  (let [opts (merge (config/defaults (:env-file opts) (into {} (System/getenv))) opts)]
+    (assoc opts :edge-scope (config/parse-edge-scope (or (:edge-scope opts) "focus"))
+                :crap (complexity/parse-mode (or (:crap opts) "auto")))))
+
 (defn- parse-options [args]
   (loop [args (seq args) opts {:project-path "."}]
     (if-not args
-      (if (:help opts) opts
-        ;; 与桌面版共用全局配置，命令行参数覆盖配置；项目路径已有默认值，不受配置影响。
-        (let [opts (merge (config/defaults (:env-file opts) (into {} (System/getenv))) opts)]
-          (assoc opts :edge-scope (config/parse-edge-scope (or (:edge-scope opts) "focus"))
-                      :crap (complexity/parse-mode (or (:crap opts) "auto")))))
+      (if (:help opts) opts (with-config-defaults opts))
       (let [[arg value] args]
         (cond
-          (= arg "--help") (recur (next args) (assoc opts :help true))
-          (= arg "--no-browser") (recur (next args) (assoc opts :no-browser true))
-          (contains? #{"--project-path" "--language" "--source-path" "--architecture-doc" "--in-edn" "--port" "--env-file" "--edge-scope"
-                      "--crap" "--crap-command"} arg)
-          (do
-            (when (or (nil? value) (str/starts-with? value "--"))
-              (throw (ex-info (str "缺少参数值: " arg) {})))
-            (recur (nnext args)
-                   (case arg
-                     "--source-path" (update opts :source-paths (fnil conj []) value)
-                     "--port" (let [port (Integer/parseInt value)]
-                                (when-not (<= 0 port 65535) (throw (ex-info "端口范围为 0–65535" {})))
-                                (assoc opts :port port))
-                     (assoc opts (keyword (subs arg 2)) value))))
+          (contains? flag-options arg) (recur (next args) (assoc opts (flag-options arg) true))
+          (contains? value-options arg) (recur (nnext args) (assoc-value-option opts arg (required-value arg value)))
           :else (throw (ex-info (str "未知参数: " arg) {})))))))
 
 (defn- query-params [^HttpExchange exchange]
@@ -171,33 +182,47 @@
     (and (contains? allowed host)
          (or (nil? origin) (contains? (set (map #(str "http://" %) allowed)) origin)))))
 
+;; 返回模型数据的接口：按“方法 + 路径”查表，处理函数接收当前状态和查询参数。
+(def ^:private json-routes
+  {["GET" "/api/project"] (fn [state _] (model/project-data state))
+   ["GET" "/api/complexity"] (fn [state _] (complexity/summary (:complexity state)))
+   ["GET" "/api/view"] (fn [state params]
+                         (model/view-data state (vec (remove str/blank? (str/split (get params "path" "") #"/")))))
+   ["GET" "/api/source"] (fn [state params] (model/source-data state (get params "module")))
+   ["GET" "/api/locate"] (fn [state params] (model/locate-data state (get params "module")))
+   ["GET" "/api/document"] (fn [state params] (model/document-data state (get params "id")))
+   ["POST" "/api/subsystem-status"]
+   (fn [state params]
+     (model/update-subsystem-status! state (get params "id") (get params "heading") (get params "status")))})
+
+(def ^:private image-types
+  {"png" "image/png" "jpg" "image/jpeg" "jpeg" "image/jpeg" "gif" "image/gif" "webp" "image/webp" "svg" "image/svg+xml"})
+
+(defn- send-asset! [exchange path]
+  (let [[file type] (get assets path)]
+    (send! exchange 200 type (slurp (io/resource (str "arch_view/web/assets/" file)) :encoding "UTF-8"))))
+
+(defn- send-image! [exchange {:keys [root]} params]
+  (let [file (documents/contained-file root (io/file (.toFile ^java.nio.file.Path root) (get params "path" "")))
+        type (get image-types (str/lower-case (last (str/split (.getName file) #"\."))))]
+    (if (and type (.isFile file))
+      (send! exchange 200 type (java.nio.file.Files/readAllBytes (.toPath file)))
+      (json! exchange 404 {:error "图片不存在或格式不支持"}))))
+
+(defn- reanalyze! [exchange state reload! analyze-complexity!]
+  (if reload!
+    (do (locking state (reset! state (assoc (reload!) :can-reanalyze true)) (analyze-complexity!))
+        (json! exchange 200 (model/project-data @state)))
+    (json! exchange 409 {:error "EDN 快照不支持重新分析"})))
+
 (defn- route! [exchange state reload! analyze-complexity!]
   (let [path (.getPath (.getRequestURI ^HttpExchange exchange))
         method (.getRequestMethod ^HttpExchange exchange)
-        params (query-params exchange)]
+        params (query-params exchange)
+        handler (get json-routes [method path])]
     (cond
-      (and (= method "GET") (contains? assets path))
-      (let [[file type] (get assets path)]
-        (send! exchange 200 type (slurp (io/resource (str "arch_view/web/assets/" file)) :encoding "UTF-8")))
-      (and (= method "GET") (= path "/api/project")) (json! exchange 200 (model/project-data @state))
-      (and (= method "GET") (= path "/api/complexity")) (json! exchange 200 (complexity/summary (:complexity @state)))
-      (and (= method "GET") (= path "/api/view"))
-      (json! exchange 200 (model/view-data @state (vec (remove str/blank? (str/split (get params "path" "") #"/")))))
-      (and (= method "GET") (= path "/api/source")) (json! exchange 200 (model/source-data @state (get params "module")))
-      (and (= method "GET") (= path "/api/locate")) (json! exchange 200 (model/locate-data @state (get params "module")))
-      (and (= method "GET") (= path "/api/document")) (json! exchange 200 (model/document-data @state (get params "id")))
-      (and (= method "POST") (= path "/api/subsystem-status"))
-      (json! exchange 200 (model/update-subsystem-status! @state (get params "id") (get params "heading") (get params "status")))
-      (and (= method "GET") (= path "/api/image"))
-      (let [root (:root @state)
-            file (documents/contained-file root (io/file (.toFile ^java.nio.file.Path root) (get params "path" "")))
-            ext (str/lower-case (last (str/split (.getName file) #"\.")))
-            type (get {"png" "image/png" "jpg" "image/jpeg" "jpeg" "image/jpeg" "gif" "image/gif" "webp" "image/webp" "svg" "image/svg+xml"} ext)]
-        (if (and type (.isFile file))
-          (send! exchange 200 type (java.nio.file.Files/readAllBytes (.toPath file)))
-          (json! exchange 404 {:error "图片不存在或格式不支持"})))
-      (and (= method "POST") (= path "/api/reanalyze"))
-      (if reload! (do (locking state (reset! state (assoc (reload!) :can-reanalyze true)) (analyze-complexity!))
-                      (json! exchange 200 (model/project-data @state)))
-          (json! exchange 409 {:error "EDN 快照不支持重新分析"}))
+      (and (= method "GET") (contains? assets path)) (send-asset! exchange path)
+      handler (json! exchange 200 (handler @state params))
+      (= [method path] ["GET" "/api/image"]) (send-image! exchange @state params)
+      (= [method path] ["POST" "/api/reanalyze"]) (reanalyze! exchange state reload! analyze-complexity!)
       :else (json! exchange 404 {:error "接口不存在"}))))

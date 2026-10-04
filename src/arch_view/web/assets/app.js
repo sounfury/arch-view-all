@@ -383,7 +383,8 @@ function statusBadge(status) {
 
 function complexityLevel(value) {
   const limit = state.complexity.limit || 10;
-  return value > limit ? 'high' : value > limit / 2 ? 'warn' : 'ok';
+  // 黄色只提示接近上限的函数；放得太宽会让大半个项目都变黄。
+  return value > limit ? 'high' : value > limit * 0.8 ? 'warn' : 'ok';
 }
 function complexityBadge(metrics) {
   if (!state.showComplexity || !metrics?.count) return document.createDocumentFragment();

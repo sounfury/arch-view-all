@@ -93,7 +93,7 @@ arch-view scan . --out architecture.edn   # 只分析、可导出快照
 
 包级文档：源码目录里的 `ARCHITECTURE.md` 会被识别为该包的说明（`README.md` 不会）。进入这个包（或更深的目录）时，工作台自动切换到离得最近的一份：图上的子系统名、职责、实现状态和「文档数据流」都改用它，`#module=` 链接相对该包目录解析；回到上层后恢复项目文档。大包可以按模板放一份自己的 `ARCHITECTURE.md`，描述包内子系统与数据流。代码依赖视图下左侧导航始终使用项目级文档；数据流视图下左侧列出当前文档的数据流节点，点击即在图上选中。
 
-函数复杂度：装有 [crap-everything](https://github.com/sounfury/crap-everything) 的 `crap` 命令时，`serve` 会在后台运行 `crap complexity`，地图先照常显示，分析完成后卡片右下角出现 `CC n`（文件或包内最高的圈复杂度），详情里按复杂度列出函数，点击跳到源码对应行。颜色按项目 `crap.toml` 中 `[gate] max_complexity` 分级（没有则按 10）：超过上限为红色，超过一半为黄色。工具栏的「复杂度」眼睛按钮可开关显示。只跑复杂度、不运行测试，也不在项目里写报告文件；没装 crap、或项目语言 crap 不支持时不显示。可用 `ARCH_VIEW_CRAP=off` 或 `--crap off` 关闭。
+函数复杂度：装有 [crap-everything](https://github.com/sounfury/crap-everything) 的 `crap` 命令时，`serve` 会在后台运行 `crap complexity`，地图先照常显示，分析完成后卡片右下角出现 `CC n`（文件或包内最高的圈复杂度），详情里按复杂度列出函数，点击跳到源码对应行。颜色按项目 `crap.toml` 中 `[gate] max_complexity` 分级（没有则按 10）：超过上限为红色，超过上限的 80% 为黄色。工具栏的「复杂度」眼睛按钮可开关显示。只跑复杂度、不运行测试，也不在项目里写报告文件；没装 crap、或项目语言 crap 不支持时不显示。可用 `ARCH_VIEW_CRAP=off` 或 `--crap off` 关闭。
 
 ---
 

@@ -73,50 +73,58 @@
       (concat ["--project-path" (first args)] (rest args)))
     args))
 
+;; 各命令允许的参数：values 需要取值，flags 是开关。
+(def ^:private command-options
+  {"serve" {:values (into common-value-options #{"--port" "--architecture-doc" "--env-file" "--edge-scope"
+                                                 "--crap" "--crap-command"})
+            :flags #{"--no-browser"}}
+   "scan" {:values (into common-value-options desktop-value-options)
+           :flags #{"--include-tests" "--exclude-tests" "--no-gui"}}
+   "desktop" {:values (into common-value-options desktop-value-options)
+              :flags #{"--include-tests" "--exclude-tests" "--gui" "--no-gui"}}})
+
+(defn- missing-value? [value]
+  (or (nil? value) (str/starts-with? value "--")))
+
 (defn- validate-options! [command args]
-  (let [values (case command
-                 "serve" (into common-value-options #{"--port" "--architecture-doc" "--env-file" "--edge-scope"
-                                                     "--crap" "--crap-command"})
-                 (into common-value-options desktop-value-options))
-        flags (case command
-                "serve" #{"--no-browser"}
-                "scan" #{"--include-tests" "--exclude-tests" "--no-gui"}
-                #{"--include-tests" "--exclude-tests" "--gui" "--no-gui"})]
+  (let [{:keys [values flags]} (command-options command)]
     (loop [remaining (seq args)]
-      (when remaining
-        (let [[option value] remaining]
-          (cond
-            (contains? flags option) (recur (next remaining))
-            (contains? values option)
-            (do
-              (when (or (nil? value) (str/starts-with? value "--"))
-                (throw (ex-info (str "缺少参数值：" option) {})))
-              (recur (nnext remaining)))
-            :else (throw (ex-info (str "当前命令不支持参数：" option "；可用 --help 查看帮助。") {}))))))))
+      (when-let [[option value] remaining]
+        (cond
+          (contains? flags option) (recur (next remaining))
+          (not (contains? values option))
+          (throw (ex-info (str "当前命令不支持参数：" option "；可用 --help 查看帮助。") {}))
+          (missing-value? value) (throw (ex-info (str "缺少参数值：" option) {}))
+          :else (recur (nnext remaining)))))))
+
+(defn- resolve-command
+  "返回 [命令 命令参数]；没写命令、直接传旧分析参数时按桌面版处理。"
+  [args]
+  (let [first-arg (first args)
+        explicit? (contains? commands first-arg)]
+    (when (and first-arg (not explicit?) (not (str/starts-with? first-arg "-")))
+      (throw (ex-info (str "未知命令：" first-arg "；请运行 arch-view --help。") {})))
+    [(if explicit? first-arg "desktop") (normalize-project-args (if explicit? (rest args) args))]))
+
+(defn- run-scan! [args]
+  (println "正在分析源码，不打开窗口……")
+  (flush)
+  (apply (requiring-resolve 'arch-view.core/-main) (concat args ["--no-gui"]))
+  (println "源码分析已完成。")
+  (flush)
+  (shutdown-agents))
+
+(defn- run-command! [command args]
+  (case command
+    "serve" (apply (requiring-resolve 'arch-view.web.server/-main) args)
+    "scan" (run-scan! args)
+    "desktop" (apply (requiring-resolve 'arch-view.core/-main) args)))
 
 (defn- dispatch! [args]
-  (let [first-arg (first args)]
-    (cond
-      (or (nil? first-arg) (contains? #{"--help" "help"} first-arg))
-      (println (usage-summary (second args)))
-
-      :else
-      (let [explicit? (contains? commands first-arg)
-            command (if explicit? first-arg "desktop")
-            _ (when (and first-arg (not explicit?) (not (str/starts-with? first-arg "-")))
-                (throw (ex-info (str "未知命令：" first-arg "；请运行 arch-view --help。") {})))
-            command-args (normalize-project-args (if explicit? (rest args) args))]
-        (if (some #{"--help"} command-args)
-          (println (usage-summary command))
-          (do
-            (validate-options! command command-args)
-            (case command
-              "serve" (apply (requiring-resolve 'arch-view.web.server/-main) command-args)
-              "scan" (do
-                       (println "正在分析源码，不打开窗口……")
-                       (flush)
-                       (apply (requiring-resolve 'arch-view.core/-main) (concat command-args ["--no-gui"]))
-                       (println "源码分析已完成。")
-                       (flush)
-                       (shutdown-agents))
-              "desktop" (apply (requiring-resolve 'arch-view.core/-main) command-args))))))))
+  (if (or (nil? (first args)) (contains? #{"--help" "help"} (first args)))
+    (println (usage-summary (second args)))
+    (let [[command command-args] (resolve-command args)]
+      (if (some #{"--help"} command-args)
+        (println (usage-summary command))
+        (do (validate-options! command command-args)
+            (run-command! command command-args))))))

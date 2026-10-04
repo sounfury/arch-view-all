@@ -1,7 +1,7 @@
-;; 工具函数：遍历指定源码目录，收集需要分析的源码文件路径。
+;; 工具函数：遍历指定源码目录，收集需要分析的 Clojure 源码文件路径。
 
 ;; mutation-tested: 2026-03-08
-(ns arch-view.input.source-scan
+(ns arch-view.input.clojure.source-scan
   (:require [clojure.java.io :as io]))
 
 (def extensions #{".clj" ".cljc" ".cljs"})
