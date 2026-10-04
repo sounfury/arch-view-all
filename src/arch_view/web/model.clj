@@ -3,6 +3,7 @@
 
 (ns arch-view.web.model
   (:require [arch-view.domain.architecture-projection :as projection]
+            [arch-view.web.complexity :as complexity]
             [arch-view.web.documents :as documents]
             [clojure.java.io :as io]
             [clojure.string :as str]))
@@ -14,7 +15,7 @@
     {:architecture architecture :root root :opts opts
      :documents (documents/discover root architecture (:architecture-doc opts))}))
 
-(defn project-data [{:keys [architecture root documents can-reanalyze opts]}]
+(defn project-data [{:keys [architecture root documents can-reanalyze opts] :as state}]
   {:name (.getName (.toFile ^java.nio.file.Path root))
    :root (str root)
    :language (get-in architecture [:guidance :language] :clojure)
@@ -24,9 +25,10 @@
    :dependencyCount (count (get-in architecture [:graph :edges]))
    :canReanalyze (boolean can-reanalyze)
    :edgeScope (get opts :edge-scope "focus")
+   :complexity (complexity/summary (:complexity state))
    :documents documents})
 
-(defn view-data [{:keys [architecture root documents]} path]
+(defn view-data [{:keys [architecture root documents] :as state} path]
   (let [view (projection/view-architecture architecture path)
         nodes (mapv (fn [id]
                       (let [leaf? (true? (get-in view [:module->leaf? id]))
@@ -45,6 +47,11 @@
                                 :moduleCount (count members) :members members
                                 :sourceModule (when leaf? (first members))}
                                (when (and (not leaf?) only-file) {:descriptionFromOnlyFile true})
+                               (when-let [metrics (complexity/node-metrics
+                                                   (:complexity state)
+                                                   (map (fn [module file] [module (some-> file io/file .getCanonicalPath)])
+                                                        members member-files))]
+                                 {:complexity metrics})
                                (source-info root file))))
                     (sort (get-in view [:graph :nodes])))
         sources (keep #(get-in architecture [:graph :module->source-file %]) (mapcat :members nodes))

@@ -49,6 +49,8 @@
                  "  --architecture-doc <文件>  读取已有的架构说明\n"
                  "  --env-file <文件>       配置文件，默认读取工具安装目录的 .env\n"
                  "  --edge-scope <focus|all> 默认连线范围：当前模块或全部模块\n"
+                 "  --crap <auto|off>       发现 crap 命令时在后台分析函数复杂度，默认 auto\n"
+                 "  --crap-command <命令>   crap 不在 PATH 上时指定其路径\n"
                  "  --no-browser            启动服务但不自动打开浏览器\n"
                  "就绪后输出地址和进程号（PID），服务持续占用前台；按 Ctrl+C 停止。\n"
                  "自动化调用请使用持久或后台进程，并添加 --no-browser。\n")
@@ -73,7 +75,8 @@
 
 (defn- validate-options! [command args]
   (let [values (case command
-                 "serve" (into common-value-options #{"--port" "--architecture-doc" "--env-file" "--edge-scope"})
+                 "serve" (into common-value-options #{"--port" "--architecture-doc" "--env-file" "--edge-scope"
+                                                     "--crap" "--crap-command"})
                  (into common-value-options desktop-value-options))
         flags (case command
                 "serve" #{"--no-browser"}

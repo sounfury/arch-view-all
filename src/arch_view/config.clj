@@ -60,6 +60,8 @@
                "ARCH_VIEW_ZOOM" [:zoom #(Double/parseDouble (parse-scale %))]
                "ARCH_VIEW_EDGE_SCOPE" [:edge-scope parse-edge-scope]
                "ARCH_VIEW_PYTHON" [:python identity]
+               "ARCH_VIEW_CRAP" [:crap identity]
+               "ARCH_VIEW_CRAP_COMMAND" [:crap-command identity]
                "ARCH_VIEW_OUT" [:out identity]}]
     (reduce-kv (fn [opts key [option parse]]
                  (if-let [value (get values key)]

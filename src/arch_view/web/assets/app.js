@@ -15,7 +15,8 @@ const state = { project: null, view: null, rootView: null, path: [], selected: n
   flows: [], flowIndex: 0, diagramKind: 'code', mapRequest: 0, flowNodes: [], selectedFlow: null, documentBase: [],
   coverageDocument: null, uncovered: new Set(), pendingFlowSelection: null, hovered: null,
   pan: { x: 0, y: 0 }, fullscreenCamera: null, restoreCamera: null,
-  navigationView: null, navigationPath: [] };
+  navigationView: null, navigationPath: [],
+  complexity: { status: 'unavailable' }, showComplexity: localStorage.getItem('arch-view.show-complexity') !== 'off' };
 
 // ===== 私有方法 =====
 
@@ -368,6 +369,7 @@ function renderMap() {
     const heading = element('div', 'node-heading'); heading.append(icon(node.leaf ? 'file' : 'folder', 'node-symbol'), element('span', 'node-name', titleFor(node)));
     card.append(heading, element('p', 'node-description', descriptionFor(node) || (node.leaf ? '源码文件 · 点击查看依赖与说明' : `${node.moduleCount} 个源码模块 · 双击查看内部结构`)));
     const bottom = element('div', 'node-bottom'); bottom.append(element('span', '', `${node.label} / ${node.moduleCount}`));
+    bottom.append(complexityBadge(node.complexity));
     if (roleFor(node)) bottom.append(statusBadge(roleFor(node).status));
     bottom.append(icon(node.leaf ? 'external' : 'arrow', 'node-arrow')); card.append(bottom); world.append(card);
   } applyHighlight();
@@ -377,6 +379,68 @@ function statusBadge(status) {
   if (!status) return document.createDocumentFragment();
   const kind = status === '已完成' ? 'complete' : status === '未完成' ? 'pending' : 'other';
   return element('span', `implementation-status ${kind}`, status);
+}
+
+function complexityLevel(value) {
+  const limit = state.complexity.limit || 10;
+  return value > limit ? 'high' : value > limit / 2 ? 'warn' : 'ok';
+}
+function complexityBadge(metrics) {
+  if (!state.showComplexity || !metrics?.count) return document.createDocumentFragment();
+  const badge = element('span', `complexity-badge ${complexityLevel(metrics.max)}`, `CC ${metrics.max}`);
+  badge.title = `最高圈复杂度 ${metrics.max} · 合计 ${metrics.total} · ${metrics.count} 个函数（上限 ${state.complexity.limit}）`;
+  return badge;
+}
+function complexitySection(node) {
+  const metrics = node.complexity;
+  if (!state.showComplexity || !metrics?.count) return document.createDocumentFragment();
+  const section = element('section', 'detail-section'), heading = element('h4', '', node.leaf ? '函数复杂度' : '最复杂的函数');
+  heading.append(element('span', '', `最高 ${metrics.max} · 合计 ${metrics.total} · ${metrics.count} 个函数`)); section.append(heading);
+  const list = element('div', 'relation-list');
+  for (const fn of metrics.functions.slice(0, node.leaf ? 30 : 10)) {
+    const item = button('', 'relation complexity-function', () => showSource(fn.module, fn.line));
+    // 只显示类名与函数名；完整符号放在提示里。
+    item.title = `${fn.symbol}${fn.line ? ` · 第 ${fn.line} 行` : ''}`;
+    item.append(element('span', '', fn.symbol.split('(')[0].split('.').slice(-2).join('.')),
+      element('span', `complexity-value ${complexityLevel(fn.complexity)}`, fn.complexity));
+    list.append(item);
+  }
+  if (metrics.count > list.children.length) section.append(list, element('p', '', `另有 ${metrics.count - list.children.length} 个函数未列出`));
+  else section.append(list);
+  return section;
+}
+function renderComplexityToggle() {
+  const control = $('#complexity-toggle'), { status, error, max, limit, count } = state.complexity;
+  // crap 不支持的语言（如 Clojure）分析结果为空，没有可切换的内容。
+  control.hidden = status === 'unavailable' || (status === 'ready' && !count);
+  const label = status === 'running' ? '复杂度分析中…' : status === 'failed' ? '复杂度分析失败' : '复杂度';
+  control.replaceChildren(icon(state.showComplexity ? 'eye' : 'eye-off'), element('span', '', label));
+  control.classList.toggle('busy', status === 'running'); control.classList.toggle('failed', status === 'failed');
+  control.setAttribute('aria-pressed', String(state.showComplexity));
+  control.title = status === 'failed' ? `crap 复杂度分析失败：${error || '未知原因'}` :
+    status === 'running' ? 'crap 正在后台分析函数复杂度' :
+    `${state.showComplexity ? '隐藏' : '显示'}函数复杂度（项目最高 ${max ?? '—'}，上限 ${limit}）`;
+}
+function toggleComplexity() {
+  if (state.complexity.status === 'failed') { toast($('#complexity-toggle').title); return; }
+  state.showComplexity = !state.showComplexity;
+  localStorage.setItem('arch-view.show-complexity', state.showComplexity ? 'on' : 'off');
+  renderComplexityToggle();
+  if (state.diagramKind === 'code') { renderMap(); applyZoom(); renderDetail(); }
+}
+let complexityTimer;
+async function watchComplexity() {
+  // crap 在后台运行，地图先照常显示；分析完成后只刷新当前层的数据。
+  clearTimeout(complexityTimer);
+  try { state.complexity = await api('/api/complexity'); } catch { return; }
+  renderComplexityToggle();
+  if (state.complexity.status === 'running') { complexityTimer = setTimeout(watchComplexity, 1500); return; }
+  if (state.complexity.status !== 'ready' || !state.view) return;
+  const path = state.path.join('/'), view = await api('/api/view', { path });
+  if (path !== state.path.join('/')) return;
+  const selected = state.selected?.id;
+  state.view = view; state.selected = view.nodes.find(node => node.id === selected) || null;
+  if (state.diagramKind === 'code') { renderMap(); applyZoom(); renderDetail(); }
 }
 
 function statusChoices(role) {
@@ -663,6 +727,7 @@ function renderDetail() {
   panel.append(description);
   const actions = element('div', 'detail-actions'); actions.append(button(node.leaf ? '查看源码 ↗' : '查看内部结构 ↘', 'button primary', () => enterNode(node))); panel.append(actions);
   if (role) panel.append(subsystemDetails(role));
+  panel.append(complexitySection(node));
   const edges = state.view.displayEdges;
   panel.append(relationSection('依赖这些模块 →', edges.filter(e => e.from === node.id), false), relationSection('← 被这些模块依赖', edges.filter(e => e.to === node.id), true));
   if (!node.leaf) {
@@ -797,7 +862,7 @@ function showDocument(sectionTitle) {
     }).catch(() => { pre.before(element('p', 'flow-error-note', '此流程图暂时无法绘制，以下保留原文。')); });
   }
 }
-async function showSource(module) {
+async function showSource(module, line) {
   if (!module) { toast('该模块没有可用的源码路径'); return; }
   const request = ++state.sourceRequest;
   try {
@@ -805,19 +870,22 @@ async function showSource(module) {
     openDrawer(module.split('.').at(-1), source.path, '源码文件');
     if (source.description) $('#drawer-content').append(element('div', 'source-description', source.description));
     const list = element('ol', 'source-list'); source.content.split('\n').forEach(line => list.append(element('li', '', line || ' '))); $('#drawer-content').append(list);
+    const target = line && list.children[line - 1];
+    if (target) { target.classList.add('source-target'); target.scrollIntoView({ block: 'center' }); }
   } catch (error) { toast(error.message); }
 }
 async function reanalyze() {
   const control = $('#reanalyze'); control.disabled = true; control.classList.add('busy'); control.replaceChildren(icon('refresh'), element('span', '', '分析中…'));
   try {
     state.project = await api('/api/reanalyze', {}, 'POST'); updateProject();
+    state.complexity = state.project.complexity; renderComplexityToggle();
     state.rootView = await api('/api/view');
     state.navigationView = null; state.navigationPath = [];
     const doc = state.project.documents.find(d => d.id === state.document?.id) || state.project.documents.find(d => d.scope === 'project');
     await loadDocument(doc?.id || '');
     let path = state.path;
     if (path.length && !(await api('/api/view', { path: path.join('/') })).nodes.length) path = [];
-    await navigate(path, state.mode); toast('架构与项目说明已更新');
+    await navigate(path, state.mode); toast('架构与项目说明已更新'); watchComplexity();
   } catch (error) { toast(error.message); }
   finally { control.disabled = false; control.classList.remove('busy'); control.replaceChildren(icon('refresh'), element('span', '', '重新分析')); }
 }
@@ -836,6 +904,7 @@ for (const [id, kind] of [['code-view', 'code'], ['flow-view', 'flow']]) $('#' +
 $('#flow-select').addEventListener('change', event => { state.flowIndex = Number(event.target.value); state.selectedFlow = null; renderMap(); renderDetail(); });
 $('#show-edges').addEventListener('change', applyHighlight);
 $('#edge-scope').addEventListener('change', applyHighlight);
+$('#complexity-toggle').addEventListener('click', toggleComplexity);
 $('#map-back').addEventListener('click', navigateUp);
 $('#zoom-in').addEventListener('click', () => zoomBy(.1)); $('#zoom-out').addEventListener('click', () => zoomBy(-.1)); $('#zoom-fit').addEventListener('click', fitMap);
 $('#map-fullscreen').addEventListener('click', toggleMapFullscreen);
@@ -879,7 +948,9 @@ new ResizeObserver(() => {
   try {
     state.project = await api('/api/project'); updateProject();
     $('#edge-scope').value = state.project.edgeScope || 'focus';
+    state.complexity = state.project.complexity || state.complexity; renderComplexityToggle();
     const doc = state.project.documents.find(d => d.scope === 'project'); await loadDocument(doc?.id || '');
     await navigate([], 'overview');
+    if (state.complexity.status === 'running') watchComplexity();
   } catch (error) { $('#hero-summary').textContent = `加载失败：${error.message}`; toast(error.message); }
 })();

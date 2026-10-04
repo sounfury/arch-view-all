@@ -395,3 +395,15 @@ button.node.cyclic .node-symbol { color:var(--orange); }
   .view-grid.is-fullscreen .detail-panel { display:none; }
   .view-grid.is-fullscreen .map-options { flex-wrap:wrap; }
 }
+
+/* crap 复杂度：工具栏开关、卡片角标与详情中的函数列表。 */
+.complexity-toggle { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--muted); font-size:11px; white-space:nowrap; }
+.complexity-toggle .icon { width:14px; height:14px; }
+.complexity-toggle[aria-pressed="true"] { color:var(--green); border-color:#c8d9b7; background:var(--green-soft); }
+.complexity-toggle.busy { opacity:.7; cursor:progress; }
+.complexity-toggle.failed { color:var(--orange); border-color:#efe4d0; background:var(--orange-soft); }
+.complexity-badge,.complexity-value { display:inline-flex; align-items:center; padding:2px 5px; border:1px solid #dde9d5; border-radius:4px; font:9px/1.4 var(--mono); white-space:nowrap; color:#698956; background:#f1f8eb; }
+.complexity-badge.warn,.complexity-value.warn { color:#ae844d; border-color:#f1dec0; background:#fff9ed; }
+.complexity-badge.high,.complexity-value.high { color:#b4472f; border-color:#f0cfc3; background:#fdf0eb; }
+.complexity-function .complexity-value { font-size:10px; }
+.source-list li.source-target { background:#fff4d6; }

@@ -15,6 +15,8 @@
 | 配置项 | 取值 | 默认 | 作用 | 生效命令 |
 |---|---|---|---|---|
 | `ARCH_VIEW_EDGE_SCOPE` | `focus` / `all` | `focus` | 网页初始连线范围：当前模块或全部模块；页面下拉框仍可切换 | `serve` |
+| `ARCH_VIEW_CRAP` | `auto` / `off` | `auto` | 发现 crap 命令时在后台分析函数圈复杂度，卡片和详情显示结果；只跑复杂度、不运行测试、不写报告文件 | `serve` |
+| `ARCH_VIEW_CRAP_COMMAND` | 可执行文件路径 | 在 PATH 中查找 `crap` | crap 不在 PATH 上时指定其路径 | `serve` |
 | `ARCH_VIEW_LANGUAGE` | `auto` / `clojure` / `python` / `kotlin` / `java` | `auto` | 分析语言，`auto` 按项目文件识别 | 全部 |
 | `ARCH_VIEW_INCLUDE_TESTS` | `true` / `false` | `false` | 是否分析 Python 测试文件 | 全部 |
 | `ARCH_VIEW_UI_SCALE` | 正数，如 `1.25` | `1.25` | 桌面界面与字体缩放 | `desktop` |

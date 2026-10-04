@@ -1,10 +1,11 @@
-;; 职责：启动本机网页服务，提供架构浏览、源码查看、重新分析和人工实现状态保存功能。
+;; 职责：启动本机网页服务，提供架构浏览、源码查看、重新分析、复杂度展示和人工实现状态保存功能。
 ;; 核心入口：主启动函数（-main）；启动服务（start!）。
 
 (ns arch-view.web.server
   "Independent localhost Web UI. The existing desktop entry point is unchanged."
   (:require [arch-view.core :as core]
             [arch-view.config :as config]
+            [arch-view.web.complexity :as complexity]
             [arch-view.web.json :as json]
             [arch-view.web.model :as model]
             [arch-view.web.documents :as documents]
@@ -22,13 +23,15 @@
   (let [state (atom (assoc (model/create-state architecture project-path opts) :can-reanalyze (boolean reload!)))
         {:keys [server requested-port]} (bind-server opts)
         executor (Executors/newFixedThreadPool 4)
-        port (.getPort (.getAddress server))]
+        port (.getPort (.getAddress server))
+        analyze-complexity! #(complexity/start! state (:root @state) opts)]
+    (analyze-complexity!)
     (.createContext server "/"
                     (reify HttpHandler
                       (handle [_ exchange]
                         (try
                           (if (same-origin? exchange port)
-                            (route! exchange state reload!)
+                            (route! exchange state reload! analyze-complexity!)
                             (json! exchange 403 {:error "仅允许本机同源访问"}))
                           (catch Exception ex
                             (json! exchange (get (ex-data ex) :status 500) {:error (.getMessage ex)}))
@@ -93,6 +96,8 @@
        "  --architecture-doc <文件>  可选：项目内已有的 Markdown 说明\n"
        "  --env-file <文件>          配置文件，默认读取工具安装目录的 .env\n"
        "  --edge-scope <focus|all>    默认连线范围：当前模块或全部模块\n"
+       "  --crap <auto|off>          发现 crap 命令时在后台分析函数复杂度（默认 auto）\n"
+       "  --crap-command <命令>      crap 不在 PATH 上时指定其路径\n"
        "  --in-edn <文件>            加载导出的架构（源码按 --project-path 定位）\n"
        "  --port <端口>              默认 7331，被占用时自动换端口；0 自动选择\n"
        "  --no-browser               不自动打开浏览器\n"
@@ -106,12 +111,14 @@
       (if (:help opts) opts
         ;; 与桌面版共用全局配置，命令行参数覆盖配置；项目路径已有默认值，不受配置影响。
         (let [opts (merge (config/defaults (:env-file opts) (into {} (System/getenv))) opts)]
-          (assoc opts :edge-scope (config/parse-edge-scope (or (:edge-scope opts) "focus")))))
+          (assoc opts :edge-scope (config/parse-edge-scope (or (:edge-scope opts) "focus"))
+                      :crap (complexity/parse-mode (or (:crap opts) "auto")))))
       (let [[arg value] args]
         (cond
           (= arg "--help") (recur (next args) (assoc opts :help true))
           (= arg "--no-browser") (recur (next args) (assoc opts :no-browser true))
-          (contains? #{"--project-path" "--language" "--source-path" "--architecture-doc" "--in-edn" "--port" "--env-file" "--edge-scope"} arg)
+          (contains? #{"--project-path" "--language" "--source-path" "--architecture-doc" "--in-edn" "--port" "--env-file" "--edge-scope"
+                      "--crap" "--crap-command"} arg)
           (do
             (when (or (nil? value) (str/starts-with? value "--"))
               (throw (ex-info (str "缺少参数值: " arg) {})))
@@ -164,7 +171,7 @@
     (and (contains? allowed host)
          (or (nil? origin) (contains? (set (map #(str "http://" %) allowed)) origin)))))
 
-(defn- route! [exchange state reload!]
+(defn- route! [exchange state reload! analyze-complexity!]
   (let [path (.getPath (.getRequestURI ^HttpExchange exchange))
         method (.getRequestMethod ^HttpExchange exchange)
         params (query-params exchange)]
@@ -173,6 +180,7 @@
       (let [[file type] (get assets path)]
         (send! exchange 200 type (slurp (io/resource (str "arch_view/web/assets/" file)) :encoding "UTF-8")))
       (and (= method "GET") (= path "/api/project")) (json! exchange 200 (model/project-data @state))
+      (and (= method "GET") (= path "/api/complexity")) (json! exchange 200 (complexity/summary (:complexity @state)))
       (and (= method "GET") (= path "/api/view"))
       (json! exchange 200 (model/view-data @state (vec (remove str/blank? (str/split (get params "path" "") #"/")))))
       (and (= method "GET") (= path "/api/source")) (json! exchange 200 (model/source-data @state (get params "module")))
@@ -189,6 +197,7 @@
           (send! exchange 200 type (java.nio.file.Files/readAllBytes (.toPath file)))
           (json! exchange 404 {:error "图片不存在或格式不支持"})))
       (and (= method "POST") (= path "/api/reanalyze"))
-      (if reload! (do (locking state (reset! state (assoc (reload!) :can-reanalyze true))) (json! exchange 200 (model/project-data @state)))
+      (if reload! (do (locking state (reset! state (assoc (reload!) :can-reanalyze true)) (analyze-complexity!))
+                      (json! exchange 200 (model/project-data @state)))
           (json! exchange 409 {:error "EDN 快照不支持重新分析"}))
       :else (json! exchange 404 {:error "接口不存在"}))))
