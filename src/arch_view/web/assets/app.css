@@ -43,6 +43,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,[t
 .nav-button.active { background:#dce9dc; color:#24654d; font-weight:600; }
 .nav-button:hover { background:#e2eadd; }
 .rail-section-title { display:flex; justify-content:space-between; align-items:center; margin:23px 10px 12px; }
+.rail-section-title strong { font-weight:inherit; }
 .rail-section-title span { background:#e0e8da; padding:1px 6px; border-radius:4px; font:10px/1.5 var(--mono); }
 .module-nav { display:grid; gap:4px; max-height:40vh; overflow:auto; }
 .module-link { display:flex; align-items:center; gap:10px; border:0; background:transparent; text-align:left; padding:9px 11px; color:#6a7a6c; border-radius:6px; }

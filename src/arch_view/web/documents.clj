@@ -24,11 +24,12 @@
       (recur (.getParentFile dir) (conj result dir))
       result)))
 
-(defn- named-documents [directory]
-  (filter #(and (.isFile ^java.io.File %)
-                (contains? #{"readme.md" "architecture.md"}
-                           (str/lower-case (.getName ^java.io.File %))))
-          (.listFiles (io/file directory))))
+(defn- named-documents
+  ([directory] (named-documents directory #{"readme.md" "architecture.md"}))
+  ([directory names]
+   (filter #(and (.isFile ^java.io.File %)
+                 (contains? names (str/lower-case (.getName ^java.io.File %))))
+           (.listFiles (io/file directory)))))
 
 (defn discover [^Path root architecture explicit-path]
   (let [root-file (.toFile root)
@@ -46,7 +47,8 @@
                                    [(io/file root-file "ARCHITECTURE.md")
                                     (io/file root-file "docs/architecture.md")])
                            (named-documents root-file)
-                           (mapcat named-documents dirs))]
+                           ;; 包目录只认 ARCHITECTURE.md；普通 README 没有子系统和数据流，切换过去只会丢失项目文档。
+                           (mapcat #(named-documents % #{"architecture.md"}) dirs))]
     (->> candidates
          (map #(contained-file root %))
          distinct

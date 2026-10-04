@@ -120,7 +120,12 @@
             (parse-args args (config/defaults (:env-file cli) (into {} (System/getenv)))))]
     (if help
       (println (usage-summary))
-      (let [_ (when-let [scale (:ui-scale opts)] (System/setProperty "sun.java2d.uiScale" scale))
+      (let [_ (when (and (not no-gui) (java.awt.GraphicsEnvironment/isHeadless))
+                ;; 无图形界面时先拦下，免得分析完才失败且退出码仍为 0。
+                (throw (ex-info (str "当前环境没有图形界面，无法打开桌面窗口。"
+                                     "请改用 arch-view serve（远程服务器可通过 SSH 端口转发在本机浏览器查看），"
+                                     "或用 arch-view scan 只做分析与导出。") {})))
+            _ (when-let [scale (:ui-scale opts)] (System/setProperty "sun.java2d.uiScale" scale))
             architecture (if in-edn
                            (load-architecture-edn in-edn)
                            (load-architecture project-path opts))

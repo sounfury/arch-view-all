@@ -1,0 +1,2 @@
+# 版本控制配置：Shell 脚本在 Linux/macOS 上必须使用 LF 换行。
+*.sh text eol=lf

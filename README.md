@@ -44,11 +44,19 @@ $CODEX_HOME/skills/arch-view
 
 ## 快速上手
 
-Windows 在本仓库执行一次安装，之后任意项目目录都能用 `arch-view`：
+在本仓库执行一次安装，之后任意项目目录都能用 `arch-view`。需要 Java；运行依赖放在 `target/` 下，不在 git 中，复制工具时要一并带上。
 
 ```powershell
+# Windows：生成 PowerShell、命令提示符和 Git Bash 入口
 .\bin\install.ps1
 ```
+
+```bash
+# Linux / macOS：生成 ~/.local/bin/arch-view；只有 python3 时自动写入 ARCH_VIEW_PYTHON=python3
+bash bin/install.sh
+```
+
+没有图形界面的服务器上，`desktop` 会直接提示改用网页。在服务器运行 `arch-view serve . --no-browser`，再在本机执行 `ssh -N -L 7331:127.0.0.1:7331 <服务器>`，用本机浏览器打开 `http://127.0.0.1:7331`。
 
 最常用的是打开网页工作台：
 
@@ -83,6 +91,8 @@ arch-view scan . --out architecture.edn   # 只分析、可导出快照
 | 代码依赖 / 文档数据流 | 源码图与 `ARCHITECTURE.md` 里的 Mermaid 一键切换。 |
 
 画布：拖空白处平移，Ctrl+滚轮缩放，点模块看上下游，点画布外的区域恢复全局高亮。右侧详情能跳到对应包；文档里的实现状态（已完成 / 进行中 / 未完成）由人在页面或 Markdown 里标记。
+
+包级文档：源码目录里的 `ARCHITECTURE.md` 会被识别为该包的说明（`README.md` 不会）。进入这个包（或更深的目录）时，工作台自动切换到离得最近的一份：图上的子系统名、职责、实现状态和「文档数据流」都改用它，`#module=` 链接相对该包目录解析；回到上层后恢复项目文档。大包可以按模板放一份自己的 `ARCHITECTURE.md`，描述包内子系统与数据流。代码依赖视图下左侧导航始终使用项目级文档；数据流视图下左侧列出当前文档的数据流节点，点击即在图上选中。
 
 ---
 

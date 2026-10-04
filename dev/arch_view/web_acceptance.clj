@@ -98,7 +98,8 @@
   (with-project
     {"README.md" "# 示例项目\n\n用户背景。\n"
      "docs/design.md" "# 宏观架构\n\n业务目的。\n\n## app · 应用\n\n负责入口。\n<script>alert(1)</script>\n"
-     "src/demo/app/README.md" "# 应用包\n\n包职责。\n"
+     "src/demo/app/README.md" "# 应用包\n\n普通说明。\n"
+     "src/demo/app/ARCHITECTURE.md" "# 应用包\n\n包职责。\n"
      "src/demo/app.clj" "(ns demo.app)"
      "src/demo/entry.clj" "(ns demo.entry)"
      "src/demo/plain/main.clj" "(ns demo.plain.main)"
@@ -119,7 +120,8 @@
             (check! (= 200 (:status project)) "Project metadata must be served")
             (check! (contains-text? project "\"canReanalyze\":true") "Live sessions must allow reanalysis")
             (check! (contains-text? project "docs/design.md") "Explicit existing document must be discovered")
-            (check! (contains-text? project "src/demo/app/README.md") "Optional package README must be discovered")
+            (check! (contains-text? project "src/demo/app/ARCHITECTURE.md") "Optional package architecture doc must be discovered")
+            (check! (not (contains-text? project "src/demo/app/README.md")) "Package README must not replace architecture docs")
             (check! (contains-text? view "\"id\":\"app\"") "Root must group source namespaces")
             (check! (contains-text? view "demo.app.main") "Root groups must retain member modules")
             (check! (contains-text? view "app->lib->app") "Cycle data must remain visible"))

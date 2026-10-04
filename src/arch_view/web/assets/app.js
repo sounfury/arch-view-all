@@ -229,19 +229,46 @@ function navigateUp() {
   // 返回时保留父层级，避免单子包自动展开又进入刚离开的层级。
   navigate(state.path.slice(0, -1), 'explore', null, { expand: false });
 }
+function navRoleFor(node, path) {
+  // 左侧是代码结构导航，固定使用项目级文档的子系统名，进入带包级文档的目录时不随之改变。
+  const key = [...path, node.id.replace(/\|file$/, '')].join('/');
+  return state.coverageDocument?.roles.find(role => role.module === key);
+}
 function renderRootNav() {
+  if (state.diagramKind === 'flow' && state.flowNodes.length) { renderFlowNav(); return; }
   const view = state.navigationView || state.rootView, path = state.navigationPath;
   if (!view) return;
+  $('#nav-title').textContent = '模块导航';
   $('#root-count').textContent = String(visibleNodes(view).length).padStart(2, '0');
   const nav = $('#module-nav'); nav.replaceChildren();
   for (const node of visibleNodes(view)) {
     const link = button('', 'module-link', () => node.leaf ? navigate(path, 'explore', node.id) : navigate([...path, node.id.replace(/\|file$/, '')]));
-    const copy = element('span', 'module-copy'); copy.append(element('span', 'module-name', roleFor(node, path)?.label || node.label), element('small', '', node.label));
+    const copy = element('span', 'module-copy'); copy.append(element('span', 'module-name', navRoleFor(node, path)?.label || node.label), element('small', '', node.label));
     link.append(icon(node.leaf ? 'file' : 'folder'), copy, element('span', 'module-count', node.moduleCount));
-    link.title = roleFor(node, path)?.label || node.fullName;
+    link.title = navRoleFor(node, path)?.label || node.fullName;
     link.classList.toggle('current', path.every((part, index) => state.path[index] === part) &&
       (state.path[path.length] === node.id || (state.path.length === path.length && state.selected?.id === node.id))); nav.append(link);
   }
+}
+function renderFlowNav() {
+  // 数据流视图下导航列出图中节点，点击即在图上选中，不切回代码结构。
+  $('#nav-title').textContent = '数据流节点';
+  $('#root-count').textContent = String(state.flowNodes.length).padStart(2, '0');
+  const nav = $('#module-nav'); nav.replaceChildren();
+  for (const node of state.flowNodes) {
+    const label = node.role?.label || node.label;
+    const link = button('', 'module-link', () => { selectFlowNode(node); scrollIntoMap(node.element); });
+    link.dataset.flow = node.id; link.title = node.role?.summary || label;
+    const copy = element('span', 'module-copy');
+    copy.append(element('span', 'module-name', label), element('small', '', `${node.id}${node.role?.status ? ' · ' + node.role.status : ''}`));
+    link.append(icon('flow'), copy);
+    link.classList.toggle('current', node.id === state.selectedFlow?.id); nav.append(link);
+  }
+}
+function scrollIntoMap(target) {
+  const viewport = $('#map-viewport'), box = target.getBoundingClientRect(), view = viewport.getBoundingClientRect();
+  if (box.left >= view.left && box.right <= view.right && box.top >= view.top && box.bottom <= view.bottom) return;
+  viewport.scrollBy({ left: box.left + box.width / 2 - (view.left + view.width / 2), top: box.top + box.height / 2 - (view.top + view.height / 2) });
 }
 function positionsFor(nodes) {
   // 根视图和内部视图都按实际依赖层排布，左右留出跨层连线通道。
@@ -445,7 +472,7 @@ async function renderFlowMap(request) {
       state.selectedFlow = state.flowNodes.find(node => node.id === state.pendingFlowSelection) || null;
       state.pendingFlowSelection = null;
     }
-    world.replaceChildren(svg); fitMap(); applyHighlight(); renderDetail();
+    world.replaceChildren(svg); fitMap(); applyHighlight(); renderDetail(); renderRootNav();
   } catch (error) {
     if (request !== state.mapRequest) return;
     state.world = { width: 600, height: 220 }; world.style.width = '600px'; world.style.height = '220px';
@@ -575,6 +602,7 @@ function applyHighlight() {
       node.element.classList.toggle('flow-dimmed', Boolean(query && !`${node.id} ${node.label} ${role?.summary || ''} ${role?.status || ''}`.toLowerCase().includes(query)));
       node.element.setAttribute('aria-pressed', String(node.id === state.selectedFlow?.id));
     });
+    $$('#module-nav [data-flow]').forEach(link => link.classList.toggle('current', link.dataset.flow === state.selectedFlow?.id));
     $$('.edgePaths,.edgeLabels', $('#map-world')).forEach(el => { el.style.display = $('#show-edges').checked ? '' : 'none'; });
     return;
   }
@@ -803,7 +831,7 @@ $('#document-open').addEventListener('click', () => showDocument());
 $('#search').addEventListener('input', applyHighlight);
 for (const [id, kind] of [['code-view', 'code'], ['flow-view', 'flow']]) $('#' + id).addEventListener('click', () => {
   state.diagramKind = kind; state.selected = null; state.selectedFlow = null; state.cyclesOnly = false;
-  $('#cycle-filter').classList.remove('active'); renderMap(); renderDetail(); fitMap();
+  $('#cycle-filter').classList.remove('active'); renderMap(); renderDetail(); renderRootNav(); fitMap();
 });
 $('#flow-select').addEventListener('change', event => { state.flowIndex = Number(event.target.value); state.selectedFlow = null; renderMap(); renderDetail(); });
 $('#show-edges').addEventListener('change', applyHighlight);

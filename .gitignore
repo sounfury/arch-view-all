@@ -8,6 +8,7 @@ __pycache__/
 bin/*
 !bin/arch-view.ps1
 !bin/install.ps1
+!bin/install.sh
 
 .env
 .env.local
