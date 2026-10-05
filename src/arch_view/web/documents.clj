@@ -83,7 +83,8 @@
                      (drop-while #(or (str/blank? %) (str/starts-with? % "#!")))
                      (take-while #(or (str/blank? %) (re-find #"^\s*[;#]" %)))
                      (str/join "\n"))
-        block (second (re-find #"(?s)^\s*/\*+(.*?)\*/" source))
+        ;; Java/Kotlin 的类说明写在 package 和 import 之后，先跳过这些声明行。
+        block (second (re-find #"(?s)^\s*(?:(?:package|import)\b[^\n]*\n\s*)*/\*+(.*?)\*/" source))
         python-doc (second (re-find #"(?s)^\s*(?:#![^\n]*\n\s*)?(?:#[^\n]*\n\s*)*[uUrR]?(?:\"\"\"|''')(.*?)(?:\"\"\"|''')" source))
         ns-doc (second (re-find #"(?s)\(ns\s+[^\s()]+\s+\"((?:\\.|[^\"\\])*)\"" source))
         text (if (seq (clean-comment leading)) leading (or block python-doc ns-doc ""))]
