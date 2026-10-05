@@ -80,7 +80,9 @@
           :wildcard? (.isAllUnder directive)})))
 
 (defn- parse-file [^KtPsiFactory factory path]
-  (let [file (.createFile factory (.getName (io/file path)) (slurp path :encoding "UTF-8"))
+  ;; Kotlin PSI 只认 LF 换行，CRLF 会被当作语法错误；统一换行后行号不变。
+  (let [source (str/replace (slurp path :encoding "UTF-8") #"\r\n?" "\n")
+        file (.createFile factory (.getName (io/file path)) source)
         errors (psi-descendants file PsiErrorElement)]
     (when-let [^PsiErrorElement error (first errors)]
       (let [offset (.getTextOffset error)

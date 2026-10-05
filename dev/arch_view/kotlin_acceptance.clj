@@ -139,10 +139,22 @@
                 (get-in architecture [:graph :edges])
                 "Nested declarations, companion aliases and extensions must resolve; locals must not form edges")))))
 
+(defn- accepts-crlf-sources! []
+  ;; 编辑工具常把部分文件写成 CRLF；Kotlin PSI 只认 LF，混用时也必须照常分析。
+  (with-project
+    {"src/app/Reader.kt" (str "// 读取端口\r\npackage app\r\n\r\nimport core.Model\r\n\r\n"
+                              "/**\r\n * 说明\r\n */\r\ninterface Reader {\r\n    fun read(): Model\r\n}\r\n")
+     "src/core/Model.kt" "package core\n\ndata class Model(val name: String)\n"}
+    (fn [root]
+      (let [architecture (core/load-architecture root {:language :kotlin})]
+        (check! #{{:from "app.Reader" :to "core.Model"}} (get-in architecture [:graph :edges])
+                "CRLF sources mixed with LF sources must parse")))))
+
 (defn -main [& _]
   (accepts-project!)
   (accepts-source-roots!)
   (accepts-declarations!)
+  (accepts-crlf-sources!)
   (rejects-incomplete-analysis!)
   (println "Kotlin acceptance passed: scan, graph, declarations, projection, source view, CLI export, reload and diagnostics.")
   (shutdown-agents))
