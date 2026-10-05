@@ -24,6 +24,7 @@
     <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7a9 9 0 1 0 1 8M20 3v5h-5"/></symbol>
     <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
     <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="icon-return" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></symbol>
     <symbol id="icon-back" viewBox="0 0 24 24"><path d="M19 12H5m6-6-6 6 6 6"/></symbol>
     <symbol id="icon-external" viewBox="0 0 24 24"><path d="M8 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3M13 3h8v8M21 3 10 14"/></symbol>
     <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
@@ -77,7 +78,7 @@
       <div class="view-grid">
         <section class="map-panel">
           <div class="panel-heading"><div><div class="eyebrow">架构地图</div><h2 id="map-title">全局架构地图</h2></div>
-            <div class="map-tools"><button class="icon-button" id="map-back" aria-label="返回上一级" title="返回上一级" disabled data-icon="back"></button><button class="icon-button" id="zoom-out" aria-label="缩小" data-icon="minus"></button><span id="zoom-value">100%</span><button class="icon-button" id="zoom-in" aria-label="放大" data-icon="plus"></button><button class="icon-button fit-button" id="zoom-fit" aria-label="居中图" title="缩放适应画布并居中" data-icon="fit"></button><button class="icon-button" id="map-fullscreen" aria-label="全屏查看" title="全屏查看" aria-pressed="false" data-icon="expand"></button></div>
+            <div class="map-tools"><button class="icon-button" id="map-back" aria-label="返回上一级" title="返回上一级" disabled data-icon="back"></button><button class="return-button" id="map-return" hidden></button><button class="icon-button" id="zoom-out" aria-label="缩小" data-icon="minus"></button><span id="zoom-value">100%</span><button class="icon-button" id="zoom-in" aria-label="放大" data-icon="plus"></button><button class="icon-button fit-button" id="zoom-fit" aria-label="居中图" title="缩放适应画布并居中" data-icon="fit"></button><button class="icon-button" id="map-fullscreen" aria-label="全屏查看" title="全屏查看" aria-pressed="false" data-icon="expand"></button></div>
           </div>
           <div class="map-kind-row"><div class="map-kind" role="group" aria-label="架构图类型"><button id="code-view" class="active" aria-pressed="true"><span aria-hidden="true" data-icon="map"></span>代码依赖</button><button id="flow-view" aria-pressed="false" disabled><span aria-hidden="true" data-icon="flow"></span>文档数据流</button></div><label class="sr-only" for="flow-select">选择数据流</label><select id="flow-select" hidden></select><span id="map-provenance">连线来自源码分析</span></div>
           <div class="map-options"><label class="search-box"><span aria-hidden="true" data-icon="search"></span><input type="search" id="search" placeholder="搜索模块、职责或源码…" aria-label="搜索模块或源码"></label><div class="edge-controls"><label id="edge-scope-label">连线范围<select id="edge-scope" aria-label="连线范围"><option value="focus">当前模块</option><option value="all">全部模块</option></select></label><button type="button" id="complexity-toggle" class="complexity-toggle" aria-pressed="true" hidden></button><label class="edge-toggle"><input type="checkbox" id="show-edges" checked> 显示连线</label></div></div>

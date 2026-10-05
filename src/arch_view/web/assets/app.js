@@ -13,7 +13,7 @@ const state = { project: null, view: null, rootView: null, path: [], selected: n
   sections: [], roles: new Map(), flowRoles: new Map(), zoom: 1, world: { width: 800, height: 400 }, mode: 'overview',
   request: 0, documentRequest: 0, sourceRequest: 0, cyclesOnly: false, positions: new Map(),
   flows: [], flowIndex: 0, diagramKind: 'code', mapRequest: 0, flowNodes: [], selectedFlow: null, documentBase: [],
-  coverageDocument: null, uncovered: new Set(), pendingFlowSelection: null, hovered: null,
+  returnTrail: [], coverageDocument: null, uncovered: new Set(), pendingFlowSelection: null, hovered: null,
   pan: { x: 0, y: 0 }, fullscreenCamera: null, restoreCamera: null,
   navigationView: null, navigationPath: [],
   complexity: { status: 'unavailable' }, showComplexity: localStorage.getItem('arch-view.show-complexity') !== 'off' };
@@ -176,8 +176,10 @@ async function expandSinglePackages(view, path, request) {
   }
   return { view, path };
 }
-async function navigate(path, mode = 'explore', selectedId = null, { expand = true } = {}) {
+async function navigate(path, mode = 'explore', selectedId = null, { expand = true, keepReturn = false } = {}) {
   const request = ++state.request;
+  // 只有依赖列表的临时跳转和智慧返回保留返回记录；其它导航说明用户换了关注点。
+  if (!keepReturn) { state.returnTrail = []; renderReturnButton(); }
   const fromOverview = !path.length && mode === 'overview';
   $('#analysis-state').textContent = '正在读取结构…';
   try {
@@ -224,6 +226,25 @@ async function navigate(path, mode = 'explore', selectedId = null, { expand = tr
 function renderBreadcrumbs() {
   const nav = $('#breadcrumbs'); nav.replaceChildren(button('项目总览', '', () => navigate([], 'overview')));
   state.path.forEach((part, index) => { nav.append(element('i', '', '/'), button(part, '', () => navigate(state.path.slice(0, index + 1), 'explore', null, { expand: false }))); });
+}
+// 智慧返回：记住依赖列表跳转前的层级和选中模块，可逐级跳回。
+function rememberReturn() {
+  if (!state.selected) return;
+  state.returnTrail.push({ path: [...state.path], id: state.selected.id, label: titleFor(state.selected) });
+  renderReturnButton();
+}
+function renderReturnButton() {
+  const target = state.returnTrail.at(-1), back = $('#map-return');
+  back.hidden = !target || state.diagramKind === 'flow';
+  if (!target) return;
+  back.replaceChildren(icon('return'), element('span', '', `回到 ${target.label}`));
+  back.title = state.returnTrail.length > 1 ? `回到跳转前的 ${target.label}（还可再返回 ${state.returnTrail.length - 1} 次）` : `回到跳转前的 ${target.label}`;
+}
+async function returnBack() {
+  const target = state.returnTrail.pop(); renderReturnButton();
+  if (!target) return;
+  if (target.path.join('/') === state.path.join('/')) { selectNode(target.id); focusSelectedNode(); }
+  else await navigate(target.path, 'explore', target.id, { expand: false, keepReturn: true });
 }
 function navigateUp() {
   if ($('#map-back').disabled) return;
@@ -398,7 +419,7 @@ function complexitySection(node) {
   const section = element('section', 'detail-section'), heading = element('h4', '', node.leaf ? '函数复杂度' : '最复杂的函数');
   heading.append(element('span', '', `最高 ${metrics.max} · 合计 ${metrics.total} · ${metrics.count} 个函数`)); section.append(heading);
   const list = element('div', 'relation-list');
-  for (const fn of metrics.functions.slice(0, node.leaf ? 30 : 10)) {
+  for (const fn of metrics.functions.slice(0, node.leaf ? undefined : 30)) {
     const item = button('', 'relation complexity-function', () => showSource(fn.module, fn.line));
     // 只显示类名与函数名；完整符号放在提示里。
     item.title = `${fn.symbol}${fn.line ? ` · 第 ${fn.line} 行` : ''}`;
@@ -469,6 +490,7 @@ function statusChoices(role) {
 function renderDiagramControls() {
   const flow = state.diagramKind === 'flow';
   $('#map-back').disabled = flow || state.path.length <= state.navigationPath.length;
+  renderReturnButton();
   $('#edge-scope-label').hidden = flow;
   $('#analysis-state').textContent = flow ? '文档数据流' : '源码静态依赖';
   $('#flow-view').disabled = !state.flows.length;
@@ -623,18 +645,18 @@ function clearMapSelection() {
 function clickOutsideCanvas(event) {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  if (target.closest('#map-viewport, #drawer, #drawer-backdrop, #toast')) return;
-  if (target.closest('.status-choices, .detail-actions, .relation, .module-link, .cycle-line, .coverage-modules')) return;
+  if (target.closest('#map-viewport, #map-return, #drawer, #drawer-backdrop, #toast')) return;
+  if (target.closest('.status-choices, .detail-actions, .relation-list, .module-link, .cycle-line, .coverage-modules')) return;
   clearMapSelection();
 }
 
-async function locateModule(module) {
+async function locateModule(module, options = {}) {
   const request = ++state.request;
   $('#analysis-state').textContent = '正在定位模块…';
   try {
     const location = await api('/api/locate', { module });
     if (request !== state.request) return;
-    await navigate(location.path, 'explore', location.nodeId);
+    await navigate(location.path, 'explore', location.nodeId, options);
   } catch (error) {
     if (request === state.request) { $('#analysis-state').textContent = '源码静态依赖'; toast(error.message); }
   }
@@ -692,19 +714,48 @@ function applyHighlight() {
   }
   $('.map-footer > span').textContent = $('#edge-scope').value === 'focus' ? '指向预览 · 点击固定 · 拖动空白处移动画布 · 点击画布外恢复全局 · 绿色为依赖，橙色为被依赖' : '拖动空白处移动画布 · 点击画布外恢复全局 · 点击突出上下游 · Ctrl + 滚轮缩放';
 }
+function relationItem(id, count, incoming, label) {
+  const node = state.view.nodes.find(n => n.id === id);
+  const item = button('', `relation${incoming ? ' incoming' : ''}`, () => {
+    rememberReturn();
+    if (node) { selectNode(id); focusSelectedNode(); }
+    else locateModule(id, { keepReturn: true });
+  });
+  item.title = node ? '定位这个模块' : `${id}\n跳转到这个模块所在的软件包，并选中它`;
+  item.append(element('span', '', node ? titleFor(node) : label));
+  if (count > 1) item.append(element('span', 'relation-count', `×${count}`));
+  item.append(icon('arrow')); return item;
+}
+// 视图外的模块按所在软件包分组，包名去掉与当前模块共同的前缀；同视图模块不分组。
+function relationGroups(current, ids) {
+  const base = String(current.sourceModule || current.fullName || '').split('.');
+  const groups = new Map();
+  for (const id of ids) {
+    const parts = id.split('.'); let shared = 0;
+    while (shared < parts.length - 1 && parts[shared] === base[shared]) shared += 1;
+    const key = parts.slice(shared, -1).join('.');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ id, label: parts.at(-1) });
+  }
+  return [...groups].sort(([a], [b]) => a.localeCompare(b));
+}
 function relationSection(title, edges, incoming) {
   const section = element('section', 'detail-section'), heading = element('h4', '', title); heading.append(element('span', '', edges.length)); section.append(heading);
-  const list = element('div', 'relation-list');
-  for (const edge of edges.slice(0, 40)) {
-    const id = incoming ? edge.from : edge.to; const node = state.view.nodes.find(n => n.id === id);
-    const item = button('', `relation${incoming ? ' incoming' : ''}`, () => {
-      if (node) { selectNode(id); focusSelectedNode(); }
-      else locateModule(id);
-    });
-    item.title = node ? '定位这个模块' : '跳转到这个模块所在的软件包，并选中它';
-    item.append(element('span', '', node ? titleFor(node) : id));
-    if (edge.count > 1) item.append(element('span', 'relation-count', `×${edge.count}`));
-    item.append(icon('arrow')); list.append(item);
+  const list = element('div', 'relation-list'), counts = new Map();
+  for (const edge of edges) { const id = incoming ? edge.from : edge.to; counts.set(id, (counts.get(id) || 0) + edge.count); }
+  const local = [...counts.keys()].filter(id => state.view.nodes.some(n => n.id === id));
+  local.forEach(id => list.append(relationItem(id, counts.get(id), incoming)));
+  const expanded = counts.size <= 8;
+  for (const [key, members] of relationGroups(state.selected, [...counts.keys()].filter(id => !local.includes(id)))) {
+    if (!key || members.length === 1) {
+      members.forEach(({ id, label }) => list.append(relationItem(id, counts.get(id), incoming, key ? `${key}.${label}` : label))); continue;
+    }
+    const group = element('details', `relation-group${incoming ? ' incoming' : ''}`); group.open = expanded;
+    const summary = element('summary', '', key); summary.title = key; summary.append(element('span', 'relation-count', members.length));
+    const items = element('div', 'relation-group-items');
+    members.forEach(({ id, label }) => items.append(relationItem(id, counts.get(id), incoming, label)));
+    group.append(summary, items);
+    list.append(group);
   }
   if (!edges.length) list.append(element('p', '', '当前范围无此类依赖')); section.append(list); return section;
 }
@@ -907,6 +958,7 @@ $('#show-edges').addEventListener('change', applyHighlight);
 $('#edge-scope').addEventListener('change', applyHighlight);
 $('#complexity-toggle').addEventListener('click', toggleComplexity);
 $('#map-back').addEventListener('click', navigateUp);
+$('#map-return').addEventListener('click', returnBack);
 $('#zoom-in').addEventListener('click', () => zoomBy(.1)); $('#zoom-out').addEventListener('click', () => zoomBy(-.1)); $('#zoom-fit').addEventListener('click', fitMap);
 $('#map-fullscreen').addEventListener('click', toggleMapFullscreen);
 $('#map-viewport').addEventListener('pointerdown', beginCanvasDrag);

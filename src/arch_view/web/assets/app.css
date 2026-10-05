@@ -121,6 +121,11 @@ h2 { font-size:19px; font-weight:600; margin:5px 0 0; line-height:1.4; }
 .icon-button .icon { width:16px; height:16px; }
 .icon-button:hover { background:#f3f7ed; color:#365b33; }
 .icon-button:disabled { opacity:.4; cursor:default; background:#fff; color:#7d9370; }
+.return-button { display:inline-flex; align-items:center; gap:5px; height:31px; max-width:220px; padding:0 10px; border:1px solid #c8d9b7; border-radius:5px; background:#eef5e5; color:#365b33; font:11px var(--mono); }
+.return-button span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.return-button .icon { width:15px; height:15px; flex:none; }
+.return-button:hover { background:#e3eed6; }
+.return-button[hidden] { display:none; }
 .map-tools>span { font:10px var(--mono); min-width:36px; text-align:center; color:#94a287; }
 .fit-button { margin-left:5px; }
 .map-kind-row { padding:0 24px 13px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -236,7 +241,12 @@ button.node.cyclic .node-symbol { color:var(--orange); }
 .detail-section { margin-top:24px; }
 .detail-section h4 { display:flex; justify-content:space-between; font-size:11px; font-weight:500; color:#8ba075; margin:0 0 10px; }
 .detail-section h4 span { padding:0 6px; border-radius:3px; background:#edf3e5; color:#a3b18f; font:10px/1.7 var(--mono); }
-.relation-list { display:grid; gap:7px; }
+.relation-list { display:grid; gap:7px; max-height:340px; overflow-y:auto; overscroll-behavior:contain; padding-right:4px; }
+.relation-group-items { display:grid; gap:5px; margin:5px 0 0 12px; }
+.relation-group>summary { display:flex; align-items:center; gap:8px; cursor:pointer; padding:6px 10px; border:1px dashed #d6e2c8; border-radius:5px; font:10px/1.5 var(--mono); color:#6f8759; overflow-wrap:anywhere; }
+.relation-group>summary:hover { border-color:#c8d9b7; }
+.relation-group.incoming>summary { border-color:#e8dcc4; color:#a3845a; }
+.relation-group .relation-count { margin-left:auto; }
 .relation { display:flex; align-items:center; gap:8px; border:1px solid #e5eddc; background:#f3f7ec; border-radius:5px; padding:9px 10px; font:10px/1.5 var(--mono); text-align:left; color:#80966b; overflow-wrap:anywhere; }
 .relation>span:first-child { flex:1; }
 .relation .icon { width:13px; height:13px; opacity:.6; }
