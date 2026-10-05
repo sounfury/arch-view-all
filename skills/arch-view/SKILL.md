@@ -1,6 +1,6 @@
 ---
 name: arch-view
-description: 使用 arch-view 命令查看项目架构图、代码依赖、模块关系、循环依赖和文档数据流，或按其模板生成、维护 ARCHITECTURE.md。适用于新项目架构草案和老项目架构整理。
+description: 使用 arch-view 命令查看项目架构图、代码依赖、模块关系、循环依赖、函数复杂度和文档数据流，或按其模板生成、维护 ARCHITECTURE.md。适用于新项目架构草案和老项目架构整理。
 ---
 
 <!-- 职责：指导 AI 配合 arch-view 命令生成宏观架构说明，并打开可视化工作台。 -->
@@ -18,5 +18,5 @@ description: 使用 arch-view 命令查看项目架构图、代码依赖、模�
 按需读取参考：
 
 - 编写或补齐文档、确定实现状态：[架构模板](references/architecture-template.md)、[生成提示词](references/architecture-prompts.md)。
-- 写代码、整理老项目的文件头说明，或为大包建包级 `ARCHITECTURE.md`：[网页读取规则](references/web-behavior.md)。
+- 写代码、整理老项目的文件头说明、为大包建包级 `ARCHITECTURE.md`，或用户关心函数复杂度、门禁：[网页读取规则](references/web-behavior.md)。
 - 用户询问或需要调整默认行为（连线范围、语言、Python 解释器等）：[配置说明](references/configuration.md)。配置是工具安装目录下的全局 `.env`，不在用户项目中创建或读取配置文件。
