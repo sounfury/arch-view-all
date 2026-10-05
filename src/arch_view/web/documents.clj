@@ -69,7 +69,7 @@
 (defn- clean-comment [text]
   (->> (str/split-lines text)
        (map #(-> %
-                 (str/replace #"^\s*(?:;+|#+|\*+)\s?" "")
+                 (str/replace #"^\s*(?:;+|#+|//+|\*+)\s?" "")
                  str/trimr))
        (remove #(or (re-find #"(?i)copyright|SPDX-License|coding[:=]|^!|^mutation-tested:" %)
                     (str/blank? %)))
@@ -81,7 +81,7 @@
         lines (str/split-lines source)
         leading (->> lines
                      (drop-while #(or (str/blank? %) (str/starts-with? % "#!")))
-                     (take-while #(or (str/blank? %) (re-find #"^\s*[;#]" %)))
+                     (take-while #(or (str/blank? %) (re-find #"^\s*(?:[;#]|//)" %)))
                      (str/join "\n"))
         ;; Java/Kotlin 的类说明写在 package 和 import 之后，先跳过这些声明行。
         block (second (re-find #"(?s)^\s*(?:(?:package|import)\b[^\n]*\n\s*)*/\*+(.*?)\*/" source))

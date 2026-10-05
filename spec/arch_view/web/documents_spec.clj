@@ -6,6 +6,11 @@
   (it "读取文件开头的块注释"
     (should= "职责：入口。" (documents/header-description "/** 职责：入口。 */\nclass A")))
 
+  (it "读取文件开头的 // 行注释"
+    (should= "章会话：维护读章状态。\n工具调用在这里校验。"
+             (documents/header-description
+              "// 章会话：维护读章状态。\r\n// 工具调用在这里校验。\r\npackage a\r\n\r\nclass A\r\n")))
+
   (it "跳过 package 和 import 读取类说明"
     (should= "诊断接口：确认外部依赖可用。"
              (documents/header-description
