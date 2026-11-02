@@ -1,4 +1,4 @@
-;; 职责：组织桌面和网页共用的源码分析流程；同时处理桌面启动参数、架构导出和窗口启动。
+;; 职责：组织桌面和网页共用的源码分析及构建模块分组；同时处理桌面启动参数、架构导出和窗口启动。
 ;; 核心入口：项目分析函数（load-architecture）；桌面与导出启动函数（-main）。
 
 ;; mutation-tested: 2026-03-08
@@ -41,10 +41,12 @@
   ([project-path] (load-architecture project-path {}))
   ([project-path {:keys [language source-paths] :as opts}]
   (let [language (languages/resolve-language project-path source-paths language)
-        source-paths (or (seq source-paths) (languages/default-source-paths project-path language))
-        guidance (assoc default-guidance :source-paths (vec source-paths) :language language
-                        :namespace-root-depth (if (= :clojure language) 1 0))
-        graph (languages/build-module-graph project-path source-paths language opts)
+        roots (languages/analysis-roots project-path source-paths language)
+        source-paths (:source-paths roots)
+        guidance (merge default-guidance roots
+                        {:language language :namespace-root-depth (if (= :clojure language) 1 0)})
+        graph (languages/build-module-graph project-path source-paths language
+                                            (merge (dissoc opts :build-modules) roots))
         module->component (components/assign-components guidance (:nodes graph))
         layout (layers/assign-layers graph)
         classified-edges (classify/classify-edges guidance graph)

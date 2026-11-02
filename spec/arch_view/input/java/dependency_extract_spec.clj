@@ -1,4 +1,4 @@
-;; 测试：检查 Java 类型依赖、抽象声明、源码定位和包层级展示。
+;; 测试：检查 Java 类型依赖、构建模块重名消歧、抽象声明、源码定位和包层级展示。
 
 (ns arch-view.input.java.dependency-extract-spec
   (:require [arch-view.input.java.dependency-extract :as sut]
@@ -107,6 +107,32 @@
           (should= true (get-in nested [:module->leaf? "A"]))
           (should= true (.endsWith (get-in nested [:module->source-file "A"]) "A.java"))
           (should= 2 (count (get-in nested [:graph :edges]))))))))
+
+(describe "Java 构建模块引用"
+  (it "重复完整类名按模块区分，同模块优先，外部歧义跳过，唯一跨模块引用保留"
+    (with-project
+      {"one/src/p/Port.java" "package p; public interface Port {}"
+       "two/src/p/Port.java" "package p; public interface Port {}"
+       "one/src/p/LocalOne.java" "package p; class LocalOne { Port p; q.Unique u; }"
+       "two/src/p/LocalTwo.java" "package p; class LocalTwo { Port p; q.Unique u; }"
+       "two/src/q/Unique.java" "package q; public class Unique {}"
+       "app/src/r/App.java" "package r; class App { p.Port p; q.Unique u; }"}
+      (fn [root]
+        (let [modules [{:name "one" :source-paths ["one/src"]}
+                       {:name "two" :source-paths ["two/src"]}
+                       {:name "app" :source-paths ["app/src"]}]
+              g (sut/build-module-graph root ["one/src" "two/src" "app/src"] modules)]
+          (should= #{"one.p.Port" "two.p.Port" "one.p.LocalOne" "two.p.LocalTwo" "two.q.Unique" "app.r.App"}
+                   (:nodes g))
+          (should= #{"one.p.Port" "two.p.Port"} (:abstract-modules g))
+          (should= #{{:from "one.p.LocalOne" :to "one.p.Port"}
+                     {:from "two.p.LocalTwo" :to "two.p.Port"}
+                     {:from "one.p.LocalOne" :to "two.q.Unique"}
+                     {:from "two.p.LocalTwo" :to "two.q.Unique"}
+                     {:from "app.r.App" :to "two.q.Unique"}}
+                   (:edges g))
+          (should= (.getCanonicalPath (io/file root "two/src/p/Port.java"))
+                   (get-in g [:module->source-file "two.p.Port"])))))))
 
 (describe "Java reference precision"
   (it "Given unused imports, when analyzed, then creates no dependency"

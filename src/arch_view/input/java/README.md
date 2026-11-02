@@ -1,25 +1,47 @@
-# Java adapter
+<!-- 职责：说明 Java 静态依赖分析、构建模块识别与源码路径配置。 -->
 
-`dependency_extract.clj` implements the shared `build-module-graph` contract using
-[JavacTask](https://docs.oracle.com/en/java/javase/21/docs/api/jdk.compiler/com/sun/source/util/JavacTask.html)
-and the JDK Tree API. Run the viewer on a full JDK supporting the project's syntax.
-No target code or annotation processors are executed, and no bytecode is emitted.
+# Java 适配器
 
-Modules are package-qualified top-level types; nested types belong to their
-outermost type. Only resolved references to scanned types become edges, excluding
-self edges. Unused imports do not count as dependencies. Interfaces, annotation
-types and abstract top-level classes are abstract modules. Each node maps to its
-canonical source file path.
+`dependency_extract.clj` 通过 [JavacTask](https://docs.oracle.com/en/java/javase/21/docs/api/jdk.compiler/com/sun/source/util/JavacTask.html)
+和 JDK 语法树接口实现统一的 `build-module-graph` 入口。查看器需要运行在支持目标源码语法的完整 JDK 上。
+分析不执行目标代码或注解处理器，也不生成字节码。
 
-The adapter accepts repeated source roots, deduplicates overlapping files, and
-rejects duplicate qualified types and syntax errors. It ignores hidden/build
-folders and package/module descriptors. Default roots include every nested
-`src/main/java` directory, including the project root module. If none exist,
-discovery falls back to `src`, then `.`. Standard test roots are excluded when
-main roots are discovered. Use explicit source roots for custom layouts or tests.
-Language detection is automatic, so multi-module Maven/Gradle projects normally
-only need `--project-path`.
+默认节点是带包名的顶层类型；嵌套类型归属最外层类型。仅解析到已扫描类型的实际引用生成依赖边，排除自引用，
+未使用的导入不构成依赖。接口、注解类型和抽象顶层类标为抽象节点，每个节点映射到规范化的源码绝对路径。
 
-Missing external libraries are tolerated during symbol resolution. References
-requiring those libraries or generated sources can be incomplete. Build settings,
-annotation processing, reflection and runtime dependency injection are not analyzed.
+## Maven/Gradle 构建模块
+
+仅在语言为 Java 或 Kotlin、没有通过 `--source-path` 或配置覆盖源码路径，且发现至少两个构建模块时启用分组。
+此时浏览层级为“根 → 构建模块 → 包 → 文件”，例如 `user-api.com.foo.Port`。
+单模块、没有构建模块或显式覆盖源码路径时，节点和原有扫描行为保持不变。
+
+模块按目录发现：目录同时包含 `pom.xml`、`build.gradle`、`build.gradle.kts` 中任意一个文件以及主源码目录。
+Java 主源码目录为 `src/main/java`；Kotlin 收录 `src/main/kotlin` 和存在的 `src/main/java`。
+项目根目录满足条件时也算模块；仅有测试源码或没有主源码目录的聚合项目不算模块。
+忽略隐藏目录、符号链接及 `build`、`target`、`buildSrc` 等构建或依赖目录。
+不解析或执行 Maven/Gradle 构建文件，不从构建声明推断依赖，模块依赖由源码引用聚合得到。
+Kotlin 适配器仍只分析 Kotlin 源码，不因收录 Java 主源码目录而分析 `.java` 文件。
+
+模块名默认取目录名，根模块取项目根目录名，并把名称中的 `.` 替换为 `_`。
+重名目录改用以 `:` 连接的相对路径，例如 `services:core`；路径中的句点同样替换为下划线。
+转义后仍冲突时按相对路径排序，追加 `:2`、`:3` 等可用序号，并避开其他模块已有名称，保证名称唯一稳定。
+根模块的相对目录记录为 `.`。guidance 中的 `:build-modules` 保存名称、相对目录和源码目录，
+`:source-paths` 保存全部模块主源码目录的扁平列表；EDN 导出和回读保留这些信息。
+
+Java 仍用一个 JavacTask 一次解析所有模块，支持跨模块类型引用。不同模块可包含相同完整类型名：
+引用目标有多个候选时优先同构建模块的唯一候选；否则只有全局唯一候选才连边，仍有歧义就跳过。
+同一模块内重复完整类型名仍报错。语法错误在 `parse` 后检查；`analyze` 阶段的重复类和缺失依赖诊断不导致失败。
+Kotlin 采用相同的模块前缀和引用候选规则，同一模块内重复文件节点仍报错。
+
+根架构文档可使用 `[探索接口](#module=user-api)` 声明构建模块职责；重名路径模块可以写 `#module=services:core`。
+源码定位、成员列表和下钻沿用统一的点分层级投影，无需更改前端脚本。
+
+## 源码目录与限制
+
+适配器接受多个源码根目录，对重叠文件去重，忽略隐藏及构建目录、包描述与模块描述文件。
+未启用构建模块分组时，Java 默认扫描所有嵌套的 `src/main/java`，包括项目根目录；没有这些目录时依次回退到 `src`、`.`。
+发现主源码目录时不扫描标准测试目录；自定义布局或需要扫描测试时可显式指定 `--source-path`，同时关闭构建模块分组。
+未分组时重复完整类型名沿用原来的冲突报错。
+
+缺失外部库允许继续分析，但依赖外部类型或生成源码的引用可能不完整；javac 的重复类错误也可能使部分引用无法解析。
+不分析构建设置、注解处理、反射或运行时依赖注入。

@@ -1,7 +1,9 @@
-;; 回归测试：检查项目分析、命令行参数、架构导出和桌面启动是否符合已有行为。
+;; 回归测试：检查项目分析、构建模块分组、网页定位、架构导出和桌面启动。
 
 (ns arch-view.core-spec
   (:require [arch-view.core :as sut]
+            [arch-view.web.model :as web]
+            [clojure.java.io :as io]
             [arch-view.render.ui.quil.view :as render]
             [speclj.core :refer :all]))
 
@@ -220,6 +222,81 @@
           (should= 2 (count (get-in architecture [:layout :module->layer]))))
         (should= nil (some #(.endsWith (.getName %) ".class") (file-seq root)))
         (finally (doseq [file (reverse (file-seq root))] (.delete file)))))))
+
+(defn- with-build-project [files f]
+  (let [root (.toFile (java.nio.file.Files/createTempDirectory
+                       "arch-build-loader" (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (try
+      (doseq [[path content] files]
+        (let [file (io/file root path)]
+          (io/make-parents file)
+          (spit file content :encoding "UTF-8")))
+      (f (str root))
+      (finally (doseq [file (reverse (file-seq root))] (.delete file))))))
+
+(describe "构建模块集成"
+  (it "Java 自动启用构建模块，根层聚合依赖并支持源码定位、成员查询和导出回读"
+    (with-build-project
+      {"user-api/pom.xml" "<project/>"
+       "user-api/src/main/java/com/foo/Port.java" "package com.foo; public interface Port {}"
+       "user-app/build.gradle" "无需解析的构建脚本"
+       "user-app/src/main/java/com/foo/App.java" "package com.foo; class App implements Port {}"
+       "user-app/src/test/java/com/foo/App.java" "无效的测试源码"
+       "ARCHITECTURE.md" "## 核心子系统与职责\n### 接口\n- 职责：接口契约。\n[探索接口](#module=user-api)"}
+      (fn [root]
+        (let [architecture (sut/load-architecture root)
+              state (web/create-state architecture root {})
+              top (web/view-data state [])
+              out (io/file root "architecture.edn")]
+          (should= [{:name "user-api" :directory "user-api" :source-paths ["user-api/src/main/java"]}
+                    {:name "user-app" :directory "user-app" :source-paths ["user-app/src/main/java"]}]
+                   (get-in architecture [:guidance :build-modules]))
+          (should= ["user-api/src/main/java" "user-app/src/main/java"]
+                   (get-in architecture [:guidance :source-paths]))
+          (should= #{"user-api" "user-app"} (set (map :id (:nodes top))))
+          (should= [{:from "user-app" :to "user-api" :type :abstract :count 1}] (:edges top))
+          (should= ["user-api.com.foo.Port"] (:members (first (:nodes top))))
+          (should= {:path ["user-app" "com" "foo"] :nodeId "App" :module "user-app.com.foo.App"}
+                   (web/locate-data state "user-app.com.foo.App"))
+          (should= "user-api.com.foo.Port"
+                   (:sourceModule (first (:nodes (web/view-data state ["user-api" "com" "foo"])))))
+          (with-redefs [sut/load-architecture (fn [_ _] architecture)]
+            (sut/-main "--project-path" root "--no-gui" "--out" (str out)))
+          (should= architecture (sut/load-architecture-edn (str out)))
+          (with-redefs [sut/load-architecture (fn [& _] (throw (ex-info "不应重新扫描" {})))]
+            (sut/-main "--in-edn" (str out) "--no-gui"))
+          (should= #{"com.foo.Port" "com.foo.App"}
+                   (get-in (sut/load-architecture root {:language :java
+                                                       :source-paths ["user-api/src/main/java" "user-app/src/main/java"]})
+                           [:graph :nodes]))))))
+
+  (it "Kotlin 自动分组只扫描主源码，显式路径仍使用原文件节点"
+    (with-build-project
+      {"api/build.gradle.kts" "无需解析的构建脚本"
+       "api/src/main/kotlin/p/Port.kt" "package p\ninterface Port"
+       "app/build.gradle" ""
+       "app/src/main/java/p/App.kt" "package p\nclass App(val p: Port)"
+       "app/src/test/kotlin/p/App.kt" "无效的测试源码"}
+      (fn [root]
+        (let [architecture (sut/load-architecture root {:language :kotlin})]
+          (should= #{"api.p.Port" "app.p.App"} (get-in architecture [:graph :nodes]))
+          (should= #{{:from "app.p.App" :to "api.p.Port"}} (get-in architecture [:graph :edges]))
+          (should= ["api/src/main/kotlin" "app/src/main/java"]
+                   (get-in architecture [:guidance :source-paths])))
+        (let [architecture (sut/load-architecture root {:language :kotlin :source-paths ["api/src/main/kotlin"]})]
+          (should= #{"p.Port"} (get-in architecture [:graph :nodes]))
+          (should-not-contain :build-modules (:guidance architecture))))))
+
+  (it "Java 和 Kotlin 单模块即使有构建文件也保持原节点与 guidance"
+    (doseq [[language extension code] [[:java "java" "package p; interface Port {}"]
+                                      [:kotlin "kt" "package p\ninterface Port"]]]
+      (with-build-project {(str "src/main/" (name language) "/p/Port." extension) code}
+        (fn [root]
+          (let [before (sut/load-architecture root {:language language})]
+            (spit (io/file root "pom.xml") "<project/>")
+            (should= before (sut/load-architecture root {:language language}))
+            (should= #{"p.Port"} (get-in before [:graph :nodes]))
+            (should-not-contain :build-modules (:guidance before))))))))
 
 (describe "automatic multi-module Java loading"
   (it "discovers modules and preserves cross-module edges without CLI overrides"

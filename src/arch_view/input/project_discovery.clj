@@ -1,5 +1,5 @@
-;; 职责：识别项目的主要源码语言，并发现 Java 项目的标准源码目录。
-;; 核心入口：识别语言（detect-language）；查找 Java 源码目录（java-source-paths）。
+;; 职责：识别项目源码语言，发现主源码目录与 Maven/Gradle 构建模块。
+;; 核心入口：识别语言（detect-language）；查找 Java 源码目录（java-source-paths）；发现构建模块（build-modules）。
 
 (ns arch-view.input.project-discovery
   (:require [clojure.java.io :as io]
@@ -7,9 +7,9 @@
 
 (def ^:private ignored-directories
   #{"target" "build" "out" "dist" "node_modules" "venv" "env"
-    "__pycache__" "site-packages" "vendor"})
+    "__pycache__" "site-packages" "vendor" "buildSrc"})
 
-(declare ^:private entries ^:private project-root)
+(declare ^:private entries ^:private project-root ^:private module-candidates ^:private name-modules)
 
 (def ^:private markers
   {:clojure #{"deps.edn" "project.clj" "bb.edn"}
@@ -66,7 +66,50 @@
       paths
       (if (.isDirectory (io/file root "src")) ["src"] ["."]))))
 
+(defn build-modules
+  "按目录发现构建模块，不读取或执行构建脚本；源码路径和目录均相对项目根目录。"
+  [project-path language]
+  (if (#{:java :kotlin} language)
+    (name-modules (module-candidates (project-root project-path) language))
+    []))
+
 ;; ===== 私有方法 =====
+
+(defn- relative-path [root file]
+  (let [path (str (.relativize (.toPath root) (.toPath file)))]
+    (if (empty? path) "." (str/replace path "\\" "/"))))
+
+(defn- module-candidates [root language]
+  (let [source-dirs (if (= :kotlin language) ["src/main/kotlin" "src/main/java"] ["src/main/java"])]
+    (->> (entries root)
+         (filter #(.isDirectory ^java.io.File %))
+         (filter #(some (fn [marker] (.isFile (io/file % marker)))
+                        ["pom.xml" "build.gradle" "build.gradle.kts"]))
+         (keep (fn [dir]
+                 (let [paths (filter #(.isDirectory (io/file dir %)) source-dirs)]
+                   (when (seq paths)
+                     {:name (str/replace (.getName dir) "." "_")
+                      :directory (relative-path root dir)
+                      :source-paths (mapv #(relative-path root (io/file dir %)) paths)}))))
+         (sort-by :directory) vec)))
+
+(defn- path-module-name [{:keys [name directory]}]
+  (if (= "." directory) name (str/replace directory #"[/.]" {"/" ":" "." "_"})))
+
+(defn- available-module-name [used base]
+  (first (remove used (cons base (map #(str base ":" %) (iterate inc 2))))))
+
+(defn- name-modules [modules]
+  (let [counts (frequencies (map :name modules))
+        named (mapv #(if (> (counts (:name %)) 1) (assoc % :name (path-module-name %)) %) modules)
+        ;; 预留所有自然名称，避免补充序号覆盖另一个模块的名称。
+        reserved (set (map :name named))]
+    (second
+     (reduce (fn [[used result] module]
+               (let [base (:name module)
+                     name (if (used base) (available-module-name (into reserved used) base) base)]
+                 [(conj used name) (conj result (assoc module :name name))]))
+             [#{} []] named))))
 
 (defn- entries [root]
   (tree-seq

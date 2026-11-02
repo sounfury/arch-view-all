@@ -71,7 +71,10 @@ flowchart TD
   - **Python (`python/`)**：基于 Python 标准库 `ast` 模块独立解析，支持相对导入、别名导入与条件分支导入；识别继承 `ABC`、`ABCMeta` 或 `Protocol` 的模块。
   - **Kotlin (`kotlin/`)**：嵌入 Kotlin 官方 PSI 编译器解析器（`kotlin-compiler-embeddable`），解析包名、类型引用与内部依赖；识别 `interface` 与 `abstract class`。
   - **Java (`java/`)**：使用 JDK 编译器的语法树接口解析包、导入与类型引用，提取项目内部依赖；识别接口和抽象类，无需编译或运行目标项目。
-  - **统一调度 (`languages.clj`)**：对外提供统一的 `build-module-graph` 协议与源文件探测入口。
+  - **构建模块发现 (`project_discovery.clj`)**：Java/Kotlin 未通过 `--source-path` 或配置覆盖源码目录，且发现至少两个 Maven/Gradle 模块时，按“根 → 构建模块 → 包 → 文件”浏览，节点形如 `user-api.com.foo.Port`。模块目录须同时有 `pom.xml`、`build.gradle`、`build.gradle.kts` 之一和主源码目录；Java 为 `src/main/java`，Kotlin 为 `src/main/kotlin` 或 `src/main/java`。包括满足条件的根目录，排除隐藏目录、`build`、`target`、`buildSrc` 等目录及仅含测试源码的目录；不解析或执行构建脚本。Kotlin 仍只分析 Kotlin 文件。
+  - **模块名称与引用**：名称默认取目录名（根模块取根目录名），`.` 转为 `_`；重名改用相对路径并以 `:` 连接，如 `services:core`。转义后仍冲突则按路径排序追加可用序号。不同模块的同名完整类型优先解析为同模块唯一候选，否则只连接全局唯一候选，仍有歧义则跳过。Java 仍通过一个 JavacTask 分析所有模块，仅在解析后检查语法错误，允许符号分析阶段的重复类诊断；同一模块内重复节点仍报错。模块间依赖由源码引用自动聚合。
+  - **统一调度 (`languages.clj`)**：对外提供统一的 `build-module-graph` 协议与源文件探测入口。启用分组时 guidance 的 `:build-modules` 保存名称和相对目录及源码路径，`:source-paths` 为全部模块源码目录的扁平列表，随 EDN 导出和回读保留。单模块或显式覆盖源码目录时保持原节点和扫描行为。
+  - **架构文档匹配**：根文档可用 `[探索接口](#module=user-api)` 声明构建模块角色；名称无句点，现有网页角色匹配、成员查询与源码定位可直接使用。重名模块链接使用 `#module=services:core`。
 
 [探索源码分析模块](#module=input)
 

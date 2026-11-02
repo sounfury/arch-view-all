@@ -1,10 +1,11 @@
-;; 职责：分析源码（Kotlin）中的包、声明和引用，生成文件之间的依赖关系。
+;; 职责：分析 Kotlin 包、声明和引用，按可选构建模块区分文件节点及重名符号。
 ;; 核心入口：构建模块关系图（build-module-graph）；分析过程中不编译或运行目标项目。
 
 (ns arch-view.input.kotlin.dependency-extract
   "Kotlin PSI syntax analysis without compiling or executing the target project."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [arch-view.input.build-modules :as build-modules]
             [arch-view.model.graph :as graph])
   (:import [org.jetbrains.kotlin.cli.jvm.compiler KotlinCoreEnvironment EnvironmentConfigFiles]
            [org.jetbrains.kotlin.config CompilerConfiguration]
@@ -187,8 +188,12 @@
                   (scope-declarations scope reference)))
           (psi-ancestors reference))))
 
-(defn- reference-modules [index {:keys [file package imports own-names]}]
-  (let [explicit (remove :wildcard? imports)
+(defn- reference-modules [index node->owner {:keys [file package imports own-names owner]}]
+  (let [select-candidates (fn [candidates]
+                            (if node->owner
+                              (build-modules/preferred-candidates node->owner owner candidates)
+                              candidates))
+        explicit (remove :wildcard? imports)
         bound-names (set (map #(or (:alias %) (last (str/split (:name %) #"\."))) explicit))
         wildcard-packages (map :name (filter :wildcard? imports))
         references (remove header-reference? (psi-descendants file KtNameReferenceExpression))
@@ -197,33 +202,44 @@
         qualified (concat (map expression-name (remove header-reference? (psi-descendants file KtDotQualifiedExpression)))
                           (map type-name (psi-descendants file KtUserType)))]
     (set (concat
-           (mapcat #(symbol-modules index (:name %)) explicit)
-           (mapcat #(get index % #{}) (remove nil? qualified))
+           (mapcat #(select-candidates (symbol-modules index (:name %))) explicit)
+           (mapcat #(select-candidates (get index % #{})) (remove nil? qualified))
            (mapcat (fn [name]
                      (when-not (or (contains? own-names name) (contains? bound-names name))
                        (let [same-package (get index (qualified-name package name))]
-                         (or same-package
-                             (mapcat #(get index (qualified-name % name) #{}) wildcard-packages)))))
+                         (select-candidates
+                          (or same-package
+                              (set (mapcat #(get index (qualified-name % name) #{}) wildcard-packages)))))))
                    simple-names)))))
 
-(defn- module-graph [files]
+(defn- module-graph [files grouped?]
   (let [files (unique-modules! files)
         index (symbol-index files)
+        node->owner (when grouped? (into {} (map (juxt :module :owner) files)))
         nodes (set (map :module files))
         edges (set (for [{:keys [module] :as file} files
-                         target (reference-modules index file)
+                         target (reference-modules index node->owner file)
                          :when (not= module target)]
                      {:from module :to target}))]
     (merge (graph/make-graph nodes edges)
            {:abstract-modules (set (map :module (filter :abstract? files)))
             :module->source-file (into {} (map (juxt :module :path) files))})))
 
-(defn build-module-graph [project-path source-paths]
-  ;; PSI and its project are confined to one analysis, including GUI reloads.
-  (let [disposable (Disposer/newDisposable "arch-view Kotlin")]
-    (try
-      (let [environment (KotlinCoreEnvironment/createForProduction
-                          disposable (CompilerConfiguration.) EnvironmentConfigFiles/JVM_CONFIG_FILES)
-            factory (KtPsiFactory. (.getProject environment) false)]
-        (module-graph (mapv #(parse-file factory %) (discover-files project-path source-paths))))
-      (finally (Disposer/dispose disposable)))))
+(defn- assign-build-module [source-owner file]
+  (let [owner (source-owner (:path file))]
+    (assoc file :owner owner :module (build-modules/node-id owner (:module file)))))
+
+(defn build-module-graph
+  ([project-path source-paths] (build-module-graph project-path source-paths nil))
+  ([project-path source-paths modules]
+   ;; PSI 环境限定在一次分析中，网页重新分析也不会共享项目状态。
+   (let [disposable (Disposer/newDisposable "arch-view Kotlin")
+         source-owner (build-modules/source-owner project-path modules)]
+     (try
+       (let [environment (KotlinCoreEnvironment/createForProduction
+                           disposable (CompilerConfiguration.) EnvironmentConfigFiles/JVM_CONFIG_FILES)
+             factory (KtPsiFactory. (.getProject environment) false)]
+         (module-graph (mapv #(assign-build-module source-owner (parse-file factory %))
+                             (discover-files project-path source-paths))
+                       (seq modules)))
+       (finally (Disposer/dispose disposable))))))
