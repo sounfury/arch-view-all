@@ -178,7 +178,7 @@ async function expandSinglePackages(view, path, request) {
 }
 async function navigate(path, mode = 'explore', selectedId = null, { expand = true, keepReturn = false } = {}) {
   const request = ++state.request;
-  // 只有依赖列表的临时跳转和智慧返回保留返回记录；其它导航说明用户换了关注点。
+  // 依赖列表、数据流节点的临时跳转和智慧返回保留返回记录；其它导航说明用户换了关注点。
   if (!keepReturn) { state.returnTrail = []; renderReturnButton(); }
   const fromOverview = !path.length && mode === 'overview';
   $('#analysis-state').textContent = '正在读取结构…';
@@ -227,10 +227,17 @@ function renderBreadcrumbs() {
   const nav = $('#breadcrumbs'); nav.replaceChildren(button('项目总览', '', () => navigate([], 'overview')));
   state.path.forEach((part, index) => { nav.append(element('i', '', '/'), button(part, '', () => navigate(state.path.slice(0, index + 1), 'explore', null, { expand: false }))); });
 }
-// 智慧返回：记住依赖列表跳转前的层级和选中模块，可逐级跳回。
-function rememberReturn() {
-  if (!state.selected) return;
-  state.returnTrail.push({ path: [...state.path], id: state.selected.id, label: titleFor(state.selected) });
+// 智慧返回：记住临时跳转前的层级和选中节点，可逐级跳回。
+function rememberReturn(node = state.selected) {
+  if (state.diagramKind === 'flow') {
+    if (!node) return;
+    state.returnTrail.push({ path: [...state.path], id: node.id, label: node.role?.label || node.label,
+      kind: 'flow', mode: state.mode, documentId: state.document.id, documentBase: [...state.documentBase],
+      flowIndex: state.flowIndex });
+  } else {
+    if (!state.selected) return;
+    state.returnTrail.push({ path: [...state.path], id: state.selected.id, label: titleFor(state.selected) });
+  }
   renderReturnButton();
 }
 function renderReturnButton() {
@@ -243,7 +250,12 @@ function renderReturnButton() {
 async function returnBack() {
   const target = state.returnTrail.pop(); renderReturnButton();
   if (!target) return;
-  if (target.path.join('/') === state.path.join('/')) { selectNode(target.id); focusSelectedNode(); }
+  if (target.kind === 'flow') {
+    if (!await navigate(target.path, target.mode, null, { expand: false, keepReturn: true })) return;
+    if (state.document?.id !== target.documentId) await loadDocument(target.documentId, target.documentBase);
+    state.diagramKind = 'flow'; state.flowIndex = target.flowIndex; state.pendingFlowSelection = target.id;
+    renderMap(); renderDetail(); renderRootNav();
+  } else if (target.path.join('/') === state.path.join('/')) { selectNode(target.id); focusSelectedNode(); }
   else await navigate(target.path, 'explore', target.id, { expand: false, keepReturn: true });
 }
 function navigateUp() {
@@ -596,7 +608,11 @@ async function enterFlowModule(node) {
     const view = await api('/api/view', { path: path.join('/') });
     const target = view.nodes.find(n => n.id === id);
     if (!target) { toast('此文档节点在当前代码结构中没有对应模块'); return; }
-    if (target.leaf) showSource(target.sourceModule); else navigate([...path, id]);
+    if (target.leaf) showSource(target.sourceModule);
+    else {
+      rememberReturn(node);
+      await navigate([...path, id], 'explore', null, { keepReturn: true });
+    }
   } catch (error) { toast(error.message); }
 }
 
