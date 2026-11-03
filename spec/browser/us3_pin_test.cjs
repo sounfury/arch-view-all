@@ -168,6 +168,7 @@ test('US-3：真实 server 的全局 pin、定位、返回与项目隔离', { ti
     assert.equal(await page.locator('#design-notes').isVisible(), false);
     assert.ok(await page.locator('#map-world button.node').count() > 0);
     assert.equal(await page.locator('#zoom-value').textContent(), '100%', '首次进入代码图使用可读比例，而不是适应全图');
+    assert.equal(await page.locator('#detail-panel').isVisible(), false, '未选择模块时详情栏不占右侧整列');
     const pin = await visibleBounds(page, '#pinned-architecture');
     const map = await visibleBounds(page, '#map-viewport');
     assert.ok(pin.width >= 300 && pin.width <= 440, `浮层宽度应接近 360px，实际 ${pin.width}`);
@@ -235,13 +236,15 @@ test('US-3：真实 server 的全局 pin、定位、返回与项目隔离', { ti
     assert.ok(Math.abs(resized.width - pinWidth) >= 5, '拖动左缘应改变浮层宽度');
     assert.ok(resized.width <= 430 && resized.width >= 310, '浮层宽度仍在可操作范围');
     assert.equal(overlapping(resized, await visibleBounds(page, '#map-viewport')), true);
-    assert.equal(overlapping(resized, await visibleBounds(page, '#detail-panel')), false, '浮层不覆盖右侧详情');
+    assert.equal(await page.locator('#detail-panel').isVisible(), false, '未选择时没有右侧详情可被浮层盖住');
     assert.deepEqual(await codeCamera(page), before, '拖动浮层宽度保留代码camera');
     const beforeFullscreen = await codeCamera(page);
     await page.locator('#map-fullscreen').click();
     await page.waitForFunction(() => document.querySelector('#map-fullscreen').getAttribute('aria-pressed') === 'true');
     assert.equal(await page.locator('#pinned-architecture').isVisible(), true, '地图全屏时pin继续可见');
-    assert.equal(overlapping(await visibleBounds(page, '#pinned-architecture'), await visibleBounds(page, '#detail-panel')), false, '全屏时浮层仍留在主画布内');
+    const fullPin = await visibleBounds(page, '#pinned-architecture');
+    const fullMap = await visibleBounds(page, '#map-viewport');
+    assert.ok(fullPin.x >= fullMap.x - 2 && fullPin.x + fullPin.width <= fullMap.x + fullMap.width + 28, '全屏时浮层仍留在主画布内');
     await page.locator('#map-fullscreen').click();
     await page.waitForFunction(() => document.querySelector('#map-fullscreen').getAttribute('aria-pressed') === 'false');
     assert.deepEqual(await codeCamera(page), beforeFullscreen, '退出地图全屏跨帧恢复代码camera');

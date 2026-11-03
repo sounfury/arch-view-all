@@ -184,5 +184,38 @@ test('US-1：构建模块导航是可展开的文件夹树', { timeout: 180000 }
     await screenshot(page, 'us1-tree-expanded');
   });
 
+  await t.test('N5 空详情不占栏，固定后取消选择仍保留', async () => {
+    assert.equal(await page.locator('#detail-panel').isVisible(), false);
+    await page.locator('#map-world button.node').first().evaluate(node => node.click());
+    await page.locator('#detail-panel h3').waitFor();
+    const title = await page.locator('#detail-panel h3').textContent();
+    await page.locator('#project-name').click();
+    assert.equal(await page.locator('#detail-panel').isVisible(), false, '取消选择后空详情应收起');
+    await page.locator('#detail-open').click();
+    assert.equal(await page.locator('#detail-panel').isVisible(), true, '可以手动打开空详情');
+    await page.locator('#detail-collapse').click();
+    assert.equal(await page.locator('#detail-panel').isVisible(), false);
+    await page.locator('#map-world button.node').first().evaluate(node => node.click());
+    await page.locator('#detail-pin').click();
+    await page.locator('#project-name').click();
+    assert.equal(await page.locator('#detail-panel').isVisible(), true, '固定的详情不因取消选择关闭');
+    assert.equal(await page.locator('#detail-panel h3').textContent(), title);
+  });
+
+  await t.test('N6 已加载的无分叉包前缀合并，且不因此预取下一层', async () => {
+    if (await item(page, 'user-api').getAttribute('aria-expanded') !== 'true') await toggle(page, 'user-api').click();
+    await item(page, 'user-api/org').waitFor();
+    await toggle(page, 'user-api/org').click();
+    await item(page, 'user-api/org/util').waitFor();
+    assert.equal(await item(page, 'user-api/org').count(), 0, 'org 不应再单独占一行');
+    assert.match(await link(page, 'user-api/org/util').innerText(), /org\.util/);
+    assert.match(await link(page, 'user-api/org/util').innerText(), /user-api\/org\/util/);
+    assert.equal(await item(page, 'user-api').count(), 1, '构建模块边界不能并进包前缀');
+    assert.ok(!views.includes('user-api/org/util'), `压缩前缀不应预取下一层：${views.join(',')}`);
+    await toggle(page, 'user-api/org/util').click();
+    await item(page, 'user-api/org/util/Helper').waitFor();
+    assert.ok(views.includes('user-api/org/util'));
+  });
+
   assert.deepEqual(errors, [], errors.join('\n'));
 });

@@ -36,6 +36,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,[t
 .nav-open .icon { width:15px; height:15px; }
 body:not(.exploring) .nav-float,body:not(.exploring) .nav-open,body.map-fullscreen .nav-float,body.map-fullscreen .nav-open,
 body:has(.pin-expanded) .nav-float,body:has(.pin-expanded) .nav-open { display:none !important; }
+.detail-open { position:fixed; z-index:8; top:78px; right:12px; display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:8px 0 0 8px; background:#f7faf4; color:var(--green); padding:8px 11px; box-shadow:0 8px 22px #2a3d2814; font-size:12px; }
+body:not(.exploring) .detail-open,body.map-fullscreen .detail-open,body:has(.pin-expanded) .detail-open { display:none !important; }
 .brand { display:flex; align-items:center; gap:8px; padding:0; text-decoration:none; color:var(--ink); font:600 16px/1.1 var(--display); letter-spacing:-.4px; flex-shrink:0; }
 .brand small { display:none; }
 .brand-mark { display:grid; place-items:center; width:28px; height:30px; color:#fff; background:var(--green); border-radius:8px; }
@@ -134,10 +136,17 @@ h1 { font-family:var(--display); font-size:clamp(29px,3vw,43px); font-weight:500
 
 /* 架构画布和工具条。 */
 .view-grid { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:18px; align-items:stretch; }
+.view-grid.detail-collapsed,.view-grid.is-fullscreen.detail-collapsed { grid-template-columns:minmax(0,1fr); }
 .map-panel { position:relative; min-width:0; border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow:hidden; box-shadow:0 3px 14px #20362903; }
-.panel-heading { padding:22px 24px 16px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.map-toolbar { padding:8px 12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.map-toolbar h2 { flex:1; min-width:8em; margin:0; font-size:14px; font-weight:600; line-height:1.3; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 h2 { font-size:19px; font-weight:600; margin:5px 0 0; line-height:1.4; }
-.panel-heading .eyebrow { font-size:10px; color:#9eac90; }
+.map-menu { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding:6px 12px 8px; background:#f7faf4; border-bottom:1px solid #e8eee0; }
+.map-menu[hidden] { display:none !important; }
+#map-provenance,#map-help { color:#a2af92; font-size:10px; line-height:1.6; }
+.detail-pin-bar { display:flex; justify-content:flex-end; gap:6px; margin:0 0 8px; }
+.tree-copy { flex:none; border:0; background:transparent; color:#8a9a86; font-size:10px; padding:0 4px; }
+.tree-copy:hover { color:var(--green); }
 .map-tools { display:flex; align-items:center; gap:5px; }
 .icon-button { display:inline-grid; place-items:center; border:1px solid #e2e8db; border-radius:5px; background:#fff; color:#7d9370; width:31px; height:31px; padding:0; }
 .icon-button .icon { width:16px; height:16px; }
@@ -151,13 +160,12 @@ h2 { font-size:19px; font-weight:600; margin:5px 0 0; line-height:1.4; }
 .map-tools>span,.zoom-readout { font:10px var(--mono); min-width:36px; text-align:center; color:#94a287; }
 .zoom-readout { border:0; background:transparent; padding:0 2px; cursor:pointer; }
 .fit-button { margin-left:5px; }
-.map-kind-row { padding:0 24px 13px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.map-toolbar .map-kind { flex:none; }
 .map-kind { display:flex; gap:3px; padding:3px; background:#f0f4ea; border:1px solid #e1e9d8; border-radius:7px; }
 .map-kind button { display:inline-flex; align-items:center; gap:7px; border:0; background:transparent; color:#819476; font-size:11px; padding:7px 10px; border-radius:4px; }
 .map-kind .icon { width:15px; height:15px; }
 .map-kind button.active { background:white; color:#325e3c; box-shadow:0 1px 4px #304a3512; font-weight:600; }
-.map-kind-row>span { color:#a2af92; font-size:10px; flex:1; text-align:right; line-height:1.7; }
-.map-options { padding:0 24px 17px; display:flex; align-items:center; justify-content:space-between; gap:15px; }
+.map-tools { margin-left:auto; }
 .search-box { display:flex; align-items:center; gap:9px; background:#f7f9f3; border:1px solid #e7edde; border-radius:6px; padding:8px 11px; color:#9caa8c; }
 .search-box .icon { width:16px; height:16px; }
 .search-box input { min-width:0; width:210px; background:none; border:0; color:var(--ink); font-size:11px; outline-offset:3px; }
@@ -175,7 +183,7 @@ h2 { font-size:19px; font-weight:600; margin:5px 0 0; line-height:1.4; }
 body.map-fullscreen { overflow:hidden; }
 .view-grid.is-fullscreen { position:fixed; inset:0; z-index:12; width:100vw; height:100dvh; padding:16px; background:var(--paper); grid-template-columns:minmax(0,1fr) 300px; overflow:hidden; }
 .view-grid.is-fullscreen .map-panel { display:flex; flex-direction:column; height:100%; }
-.view-grid.is-fullscreen .panel-heading,.view-grid.is-fullscreen .map-kind-row,.view-grid.is-fullscreen .map-options,.view-grid.is-fullscreen .map-footer { flex-shrink:0; }
+.view-grid.is-fullscreen .map-toolbar,.view-grid.is-fullscreen .map-menu { flex-shrink:0; }
 .view-grid.is-fullscreen .map-stage { flex:1; min-height:0; }
 .view-grid.is-fullscreen .map-viewport { flex:1; height:auto; min-height:0; }
 .view-grid.is-fullscreen .detail-panel { height:100%; min-height:0; overflow:auto; }
@@ -365,7 +373,7 @@ button.node.cyclic .node-symbol { color:var(--orange); }
 body:not(.exploring) .view-grid { display:none; }
 .exploring .view-grid { min-height:calc(100dvh - 86px); }
 .exploring .map-panel,.exploring .map-panel.pin-open { display:flex; flex-direction:column; height:calc(100dvh - 86px); }
-.exploring .map-panel>.panel-heading,.exploring .map-panel>.map-kind-row,.exploring .map-panel>.map-options,.exploring .map-panel>.map-footer { flex-shrink:0; }
+.exploring .map-panel>.map-toolbar,.exploring .map-panel>.map-menu { flex-shrink:0; }
 .exploring .map-stage { min-height:170px; }
 .exploring .map-viewport,.exploring .map-stage>.map-viewport { flex:1; height:auto; min-height:0; }
 .exploring .detail-panel { max-height:calc(100dvh - 86px); }
@@ -450,8 +458,7 @@ body:not(.exploring) .view-grid { display:none; }
   .metrics>div,.metrics>button { padding:13px; column-gap:10px; }
   .metric-icon { width:32px; height:32px; }
   .metric-value { font-size:25px; }
-  .map-kind-row>span { flex-basis:100%; text-align:left; }
-  .map-footer { flex-wrap:wrap; }
+  .map-toolbar { gap:6px; }
   .search-box input { width:160px; }
   .detail-panel { padding:23px 19px; }
   .note-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -466,7 +473,7 @@ body:not(.exploring) .view-grid { display:none; }
   .detail-guide { display:flex; flex-wrap:wrap; margin-top:18px; padding-top:18px; }
   .metrics { grid-template-columns:repeat(2,1fr); }
   .analysis-state { display:none; }
-  .map-kind-row>span { flex-basis:auto; text-align:right; }
+  .map-toolbar h2 { flex-basis:100%; }
   .module-link { padding:9px; }
   .module-name { font-size:11px; }
 }
@@ -482,17 +489,12 @@ body:not(.exploring) .view-grid { display:none; }
   .hero-tag { font-size:9px; }
   .metrics { margin-bottom:19px; }
   .metrics>div,.metrics>button { padding:12px 14px; }
-  .panel-heading { padding:19px 17px 15px; }
-  .panel-heading { flex-wrap:wrap; }
-  .panel-heading h2 { font-size:18px; }
-  .map-kind-row { padding:0 17px 13px; }
-  .map-kind-row>span { flex-basis:100%; text-align:left; font-size:9px; }
-  .map-options { padding:0 17px 15px; gap:10px; }
+  .map-toolbar { padding:8px 10px; }
+  .map-toolbar h2 { font-size:13px; }
   .search-box { padding:7px 9px; }
   .search-box input { width:135px; font-size:10px; }
   .edge-toggle { font-size:9px; }
   .map-viewport { height:480px; min-height:0; }
-  .map-footer { padding:13px 17px; font-size:8px; gap:5px; }
   .legend,.flow-legend { gap:9px; }
   .detail-panel { padding:22px; }
   .note-grid { grid-template-columns:1fr; }
@@ -509,7 +511,7 @@ body:not(.exploring) .view-grid { display:none; }
 @media(max-width:760px) {
   .view-grid.is-fullscreen { padding:8px; grid-template-columns:minmax(0,1fr); }
   .view-grid.is-fullscreen .detail-panel { display:none; }
-  .view-grid.is-fullscreen .map-options { flex-wrap:wrap; }
+  .view-grid.is-fullscreen .map-toolbar { flex-wrap:wrap; }
 }
 
 /* crap 复杂度：工具栏开关、卡片角标与详情中的函数列表。 */
