@@ -7,17 +7,37 @@
 'use strict';
 import { parseArchitectureDocument, renderDataFlow, uncoveredModules } from './architecture_document.js';
 import { createExploration } from './exploration.js';
+import { createPinnedArchitecture } from './pinned_architecture.js';
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const CARD = { width: 240, height: 144, stride: 272, row: 178 };
 const state = { project: null, view: null, rootView: null, path: [], selected: null, document: null,
-  sections: [], roles: new Map(), flowRoles: new Map(), zoom: 1, world: { width: 800, height: 400 }, mode: 'overview',
+  sections: [], roles: new Map(), flowRoles: new Map(), zoom: 1, world: { width: 800, height: 400 }, mode: 'explore',
   request: 0, documentRequest: 0, sourceRequest: 0, cyclesOnly: false, positions: new Map(),
   flows: [], flowIndex: 0, diagramKind: 'code', mapRequest: 0, flowNodes: [], selectedFlow: null, documentBase: [],
   returnTrail: [], coverageDocument: null, uncovered: new Set(), pendingFlowSelection: null, hovered: null,
   pan: { x: 0, y: 0 }, fullscreenCamera: null, restoreCamera: null,
-  navigationView: null, navigationPath: [],
+  navigationView: null, navigationPath: [], sourceModule: null,
+  treeExpanded: new Set(), treeViews: new Map(), treeErrors: new Map(), treeLoading: new Set(),
   complexity: { status: 'unavailable' }, showComplexity: localStorage.getItem('arch-view.show-complexity') !== 'off' };
+
+let pinnedArchitecture;
+let mainCamera = null;
+function pinIsOpen() { return pinnedArchitecture?.isOpen() ?? true; }
+function updatePinnedLocation() {
+  pinnedArchitecture?.updateLocation({ path: [...state.path], selected: state.selected, sourceModule: state.sourceModule });
+}
+function loadPinnedArchitecture() {
+  // 全局文档独立加载，渲染或读取失败不阻塞当前层代码图。
+  void pinnedArchitecture.load(state.project, state.rootView).then(updatePinnedLocation).catch(error => toast(error.message));
+}
+function onPinVisibilityChange(open) {
+  $('#pin-open').hidden = open;
+  if (open && state.diagramKind === 'flow') {
+    state.diagramKind = 'code'; state.selectedFlow = null;
+    renderMap(); applyZoom(); renderDetail(); renderRootNav();
+  } else if (state.view) renderDiagramControls();
+}
 
 // ===== 私有方法 =====
 
@@ -42,7 +62,9 @@ const viewCache = new Map();
 function fetchView(path) {
   const key = Array.isArray(path) ? path.join('/') : String(path || '');
   if (!viewCache.has(key)) {
-    viewCache.set(key, api('/api/view', key ? { path: key } : {}).catch(error => { viewCache.delete(key); throw error; }));
+    viewCache.set(key, api('/api/view', key ? { path: key } : {}).then(view => {
+      state.treeViews.set(key, view); return view;
+    }).catch(error => { viewCache.delete(key); throw error; }));
   }
   return viewCache.get(key);
 }
@@ -199,13 +221,13 @@ function updateOverview() {
   const intro = tokens.find(t => t.type === 'paragraph' && plain(t.text));
   $('#hero-title').textContent = heading ? plain(heading.text) : state.project.name;
   $('#hero-summary').textContent = intro ? plain(intro.text) :
-    `${state.project.name} 包含 ${state.project.buildModules?.length ? buildModuleSummary() + '、' : ''}${state.project.moduleCount} 个源码模块。下方地图展示模块边界与实际代码依赖，点击模块可继续查看内部结构。`;
+    `${state.project.name} 包含 ${state.project.buildModules?.length ? buildModuleSummary() + '、' : ''}${state.project.moduleCount} 个源码模块。可在总览阅读架构说明，或切换到探索页查看模块边界与代码依赖。`;
   $('#document-provenance').textContent = doc ? `说明来源：${doc.path} · 结构来源：源码静态分析` : '结构来自源码 · 未选择说明文档';
   $('#document-open').disabled = !doc;
   const notes = $('#design-notes'); notes.replaceChildren();
   const sections = [...state.roles.values()].length ? [...state.roles.values()].slice(0, 6) : state.sections.filter(s => s.summary && s.depth === 2).slice(0, 6);
   if (!sections.length) {
-    notes.append(element('div', 'no-doc-note', doc ? '说明文档已加载，可在侧栏阅读完整内容。' : '可选择已有项目说明，也可直接探索架构；不要求每个包编写文档。')); return;
+    notes.append(element('div', 'no-doc-note', doc ? '说明文档已加载，可在上方打开完整内容。' : '可选择已有项目说明，也可直接探索架构；不要求每个包编写文档。')); return;
   }
   const headingRow = element('div', 'notes-heading'); headingRow.append(element('h2', '', '架构说明'), element('span', '', doc.path)); notes.append(headingRow);
   const grid = element('div', 'note-grid');
@@ -214,10 +236,36 @@ function updateOverview() {
     const open = button('↗', '', () => showDocument(section.title)); open.setAttribute('aria-label', `阅读${section.title}`); card.append(open); grid.append(card);
   }); notes.append(grid);
 }
+function navFloatPreferred() {
+  return localStorage.getItem('arch-view.nav-float') !== 'off';
+}
+function applyNavFloat() {
+  const open = navFloatPreferred();
+  const show = document.body.classList.contains('exploring') && !document.body.classList.contains('map-fullscreen');
+  $('#nav-float').hidden = !show || !open;
+  $('#nav-open').hidden = !show || open;
+}
+function setNavFloat(open) {
+  localStorage.setItem('arch-view.nav-float', open ? 'on' : 'off');
+  applyNavFloat();
+}
 function setMode(mode) {
-  state.mode = mode; document.body.classList.toggle('exploring', mode === 'explore');
-  $('#overview-nav').classList.toggle('active', mode === 'overview');
-  $('#explore-nav').classList.toggle('active', mode === 'explore');
+  const exploring = mode === 'explore';
+  state.mode = mode;
+  document.body.classList.toggle('exploring', exploring);
+  $('#overview-nav').classList.toggle('active', !exploring);
+  $('#explore-nav').classList.toggle('active', exploring);
+  $('#overview-nav').setAttribute('aria-selected', String(!exploring));
+  $('#explore-nav').setAttribute('aria-selected', String(exploring));
+  applyNavFloat();
+}
+function showOverview() {
+  if ($('.view-grid').classList.contains('is-fullscreen')) setMapFullscreen(false);
+  setMode('overview');
+}
+function showExplore() {
+  setMode('explore');
+  requestAnimationFrame(() => { if (state.view) { fitMap(); if (state.selected && state.diagramKind === 'code') focusSelectedNode(); } });
 }
 async function expandSinglePackages(view, path, request) {
   // 连续的单子包没有需要选择的分支，直接展开；源码文件保留在图中。
@@ -240,24 +288,25 @@ async function navigate(path, mode = 'explore', selectedId = null, { expand = tr
   $('#analysis-state').textContent = '正在读取结构…';
   try {
     let view = await fetchView(path);
-    if (request !== state.request) return;
+    if (request !== state.request) return false;
     const atRoot = !path.length;
     if (atRoot) { state.rootView = view; state.navigationView = null; renderCoverage(); }
     if (!state.navigationView) {
       const navigation = await expandSinglePackages(state.rootView, [], request);
-      if (!navigation || request !== state.request) return;
+      if (!navigation || request !== state.request) return false;
       state.navigationView = navigation.view; state.navigationPath = navigation.path;
     }
     // 明确定位源码时保留目标所在层，避免自动展开把选中节点跳过去。
     if (!selectedId && expand) {
       const expanded = atRoot ? { view: state.navigationView, path: state.navigationPath }
         : await expandSinglePackages(view, path, request);
-      if (!expanded || request !== state.request) return;
+      if (!expanded || request !== state.request) return false;
       view = expanded.view; path = expanded.path;
     }
     state.view = view; state.path = path; state.selected = null; state.hovered = null; state.cyclesOnly = false;
     state.selectedFlow = null;
-    state.diagramKind = fromOverview && state.flows.length ? 'flow' : 'code';
+    state.diagramKind = fromOverview && state.flows.length && !pinIsOpen() ? 'flow' : 'code';
+    updatePinnedLocation();
     setMode(mode); $('#search').value = ''; $('#cycle-filter').classList.remove('active');
     $('#map-title').textContent = codeMapTitle();
     $('#metric-groups').textContent = view.nodes.length;
@@ -276,11 +325,13 @@ async function navigate(path, mode = 'explore', selectedId = null, { expand = tr
     }
     if (request !== state.request) return false;
     if (selectedId) { selectNode(selectedId); renderRootNav(); focusSelectedNode(); }
+    updatePinnedLocation();
     return true;
   } catch (error) { if (request === state.request) { $('#analysis-state').textContent = '读取失败'; toast(error.message); } }
+  return false;
 }
 function renderBreadcrumbs() {
-  const nav = $('#breadcrumbs'); nav.replaceChildren(button('项目总览', '', () => navigate([], 'overview')));
+  const nav = $('#breadcrumbs'); nav.replaceChildren(button('项目', '', () => navigate([], 'explore')));
   state.path.forEach((part, index) => {
     const crumb = button(part, '', () => navigate(state.path.slice(0, index + 1), 'explore', null, { expand: false }));
     const module = index === 0 && buildModuleNamed(part);
@@ -289,16 +340,24 @@ function renderBreadcrumbs() {
   });
 }
 // 智慧返回：记住临时跳转前的层级和选中节点，可逐级跳回。
-function rememberReturn(node = state.selected) {
+function returnTarget(node = state.selected, { allowEmpty = false, camera = false } = {}) {
+  let target;
   if (state.diagramKind === 'flow') {
-    if (!node) return;
-    state.returnTrail.push({ path: [...state.path], id: node.id, label: node.role?.label || node.label,
+    if (!node) return null;
+    target = { path: [...state.path], id: node.id, label: node.role?.label || node.label,
       kind: 'flow', mode: state.mode, documentId: state.document.id, documentBase: [...state.documentBase],
-      flowIndex: state.flowIndex });
+      flowIndex: state.flowIndex };
   } else {
-    if (!state.selected) return;
-    state.returnTrail.push({ path: [...state.path], id: state.selected.id, label: titleFor(state.selected) });
+    if (!state.selected && !allowEmpty) return null;
+    target = { path: [...state.path], id: state.selected?.id || null,
+      label: state.selected ? titleFor(state.selected) : state.path.at(-1) || '全局架构' };
   }
+  if (camera) { target.camera = captureMapCamera(); target.mode = state.mode; }
+  return target;
+}
+function rememberReturn(node = state.selected) {
+  const target = returnTarget(node);
+  if (target) state.returnTrail.push(target);
   renderReturnButton();
 }
 function renderReturnButton() {
@@ -316,8 +375,12 @@ async function returnBack() {
     if (state.document?.id !== target.documentId) await loadDocument(target.documentId, target.documentBase);
     state.diagramKind = 'flow'; state.flowIndex = target.flowIndex; state.pendingFlowSelection = target.id;
     renderMap(); renderDetail(); renderRootNav();
-  } else if (target.path.join('/') === state.path.join('/')) { selectNode(target.id); focusSelectedNode(); }
-  else await navigate(target.path, 'explore', target.id, { expand: false, keepReturn: true });
+  } else if (target.path.join('/') === state.path.join('/')) {
+    if (target.mode) setMode(target.mode);
+    selectNode(target.id); renderRootNav(); if (!target.camera) focusSelectedNode();
+  } else if (!await navigate(target.path, target.mode || 'explore', target.id, { expand: false, keepReturn: true })) return;
+  if (target.camera) restoreMapCamera(target.camera);
+  updatePinnedLocation();
 }
 function navigateUp() {
   if ($('#map-back').disabled) return;
@@ -329,30 +392,173 @@ function navRoleFor(node, path) {
   const key = [...path, node.id.replace(/\|file$/, '')].join('/');
   return state.coverageDocument?.roles.find(role => role.module === key);
 }
+function treePathKey(path) {
+  return path.join('/');
+}
+function treeNodeId(node) {
+  return node.id.replace(/\|file$/, '');
+}
+function treeItemPath(path, node) {
+  return node.leaf ? path : [...path, treeNodeId(node)];
+}
+let treeSyncedLocation = '';
+let treeGeneration = 0;
+function resetTreeCaches() {
+  treeGeneration += 1;
+  treeSyncedLocation = '';
+  state.treeViews.clear();
+  state.treeErrors.clear();
+  state.treeLoading.clear();
+}
+function syncTreeToLocation() {
+  const location = `${treePathKey(state.path)}|${state.selected?.id || ''}`;
+  if (location === treeSyncedLocation) return;
+  treeSyncedLocation = location;
+  const prefixes = state.path.map((_, index) => state.path.slice(0, index + 1));
+  for (const prefix of prefixes) {
+    const key = treePathKey(prefix);
+    state.treeExpanded.add(key);
+    if (!state.treeViews.has(key) && !state.treeLoading.has(key)) void loadTreeBranch(prefix);
+  }
+}
+function toggleTree(path) {
+  const key = treePathKey(path);
+  if (state.treeExpanded.has(key)) {
+    state.treeExpanded.delete(key);
+    renderRootNav();
+    return;
+  }
+  state.treeExpanded.add(key);
+  if (state.treeViews.has(key)) { renderRootNav(); return; }
+  void loadTreeBranch(path);
+  renderRootNav();
+}
+async function loadTreeBranch(path) {
+  const key = treePathKey(path);
+  const generation = treeGeneration;
+  if (state.treeLoading.has(key)) return;
+  state.treeLoading.add(key);
+  state.treeErrors.delete(key);
+  try {
+    await fetchView(path);
+  } catch (error) {
+    state.treeErrors.set(key, error);
+  } finally {
+    state.treeLoading.delete(key);
+  }
+  if (generation === treeGeneration && state.diagramKind !== 'flow') renderRootNav();
+}
+function retryTree(path) {
+  const key = treePathKey(path);
+  viewCache.delete(key);
+  state.treeViews.delete(key);
+  state.treeErrors.delete(key);
+  void loadTreeBranch(path);
+  renderRootNav();
+}
+function treeNodeClass(path, node) {
+  const atPath = path.every((part, index) => state.path[index] === part);
+  if (!atPath) return '';
+  if (node.leaf) return state.path.length === path.length && state.selected?.id === node.id ? 'current' : '';
+  const id = treeNodeId(node);
+  if (state.path[path.length] !== id) {
+    return state.path.length === path.length && state.selected?.id === node.id ? 'current' : '';
+  }
+  return state.path.length === path.length + 1 && !state.selected ? 'current' : 'on-path';
+}
+function renderTreeItem(path, node) {
+  const id = treeNodeId(node);
+  const itemPath = node.leaf ? [...path, node.id] : [...path, id];
+  const childPath = treeItemPath(path, node);
+  const key = treePathKey(childPath);
+  const expanded = !node.leaf && state.treeExpanded.has(key);
+  const role = navRoleFor(node, path);
+  const module = node.buildModule;
+  const label = role?.label || node.label;
+  const item = element('div', 'tree-item');
+  item.dataset.treePath = treePathKey(itemPath);
+  item.setAttribute('role', 'treeitem');
+  if (!node.leaf) item.setAttribute('aria-expanded', String(expanded));
+  const row = element('div', 'tree-row');
+  let toggle;
+  if (node.leaf) {
+    toggle = element('span', 'tree-toggle leaf');
+  } else {
+    toggle = button('', 'tree-toggle', event => { event.stopPropagation(); toggleTree(childPath); });
+    toggle.append(icon('chevron'));
+    toggle.setAttribute('aria-label', expanded ? `收起 ${label}` : `展开 ${label}`);
+    toggle.setAttribute('aria-expanded', String(expanded));
+    toggle.title = expanded ? `收起 ${label}` : `展开 ${label}`;
+  }
+  const link = button('', 'module-link', () => node.leaf ? navigate(path, 'explore', node.id) : navigate(childPath));
+  const copy = element('span', 'module-copy');
+  copy.append(element('span', 'module-name', label),
+    element('small', '', module ? `${buildModuleKind(module)} · ${buildModuleDirectory(module)}` : node.label));
+  link.append(icon(nodeIcon(node)), copy, element('span', 'module-count', node.moduleCount));
+  link.classList.toggle('build-module', Boolean(module));
+  const mark = treeNodeClass(path, node);
+  if (mark) link.classList.add(mark);
+  link.title = role?.label || (module ? `${buildModuleKind(module)} ${node.label}（${buildModuleDirectory(module)}）` : node.fullName);
+  row.append(toggle, link);
+  item.append(row);
+  if (expanded) item.append(renderTreeChildren(childPath));
+  return item;
+}
+function renderTreeChildren(path) {
+  const key = treePathKey(path);
+  const box = element('div', 'tree-children');
+  box.setAttribute('role', 'group');
+  if (state.treeLoading.has(key) || (!state.treeViews.has(key) && !state.treeErrors.has(key))) {
+    box.append(element('div', 'tree-status', '正在读取…'));
+    return box;
+  }
+  if (state.treeErrors.has(key)) {
+    const line = element('div', 'tree-status error');
+    line.append(document.createTextNode('读取失败 '));
+    const retry = button('重试', '', event => { event.stopPropagation(); retryTree(path); });
+    line.append(retry);
+    box.append(line);
+    return box;
+  }
+  const nodes = visibleNodes(state.treeViews.get(key));
+  if (!nodes.length) {
+    box.append(element('div', 'tree-status', '没有子模块'));
+    return box;
+  }
+  for (const node of nodes) box.append(renderTreeItem(path, node));
+  return box;
+}
+function scrollCurrentTreeNode() {
+  const current = $('#module-nav .module-link.current') || $$('#module-nav .module-link.on-path').at(-1);
+  current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
 function renderRootNav() {
   if (state.diagramKind === 'flow' && state.flowNodes.length) { renderFlowNav(); return; }
-  const view = state.navigationView || state.rootView, path = state.navigationPath;
+  const view = state.rootView;
   if (!view) return;
   $('#nav-title').textContent = '模块导航';
-  $('#root-count').textContent = String(visibleNodes(view).length).padStart(2, '0');
-  const nav = $('#module-nav'); nav.replaceChildren();
-  for (const node of visibleNodes(view)) {
-    const link = button('', 'module-link', () => node.leaf ? navigate(path, 'explore', node.id) : navigate([...path, node.id.replace(/\|file$/, '')]));
-    const module = node.buildModule;
-    const copy = element('span', 'module-copy'); copy.append(element('span', 'module-name', navRoleFor(node, path)?.label || node.label),
-      element('small', '', module ? `${buildModuleKind(module)} · ${buildModuleDirectory(module)}` : node.label));
-    link.append(icon(nodeIcon(node)), copy, element('span', 'module-count', node.moduleCount));
-    link.classList.toggle('build-module', Boolean(module));
-    link.title = navRoleFor(node, path)?.label || (module ? `${buildModuleKind(module)} ${node.label}（${buildModuleDirectory(module)}）` : node.fullName);
-    link.classList.toggle('current', path.every((part, index) => state.path[index] === part) &&
-      (state.path[path.length] === node.id || (state.path.length === path.length && state.selected?.id === node.id))); nav.append(link);
-  }
+  const roots = visibleNodes(view);
+  $('#root-count').textContent = String(roots.length).padStart(2, '0');
+  const nav = $('#module-nav');
+  const scroll = nav.scrollTop;
+  nav.classList.add('module-tree');
+  nav.setAttribute('role', 'tree');
+  nav.setAttribute('aria-label', '构建模块与源码目录');
+  syncTreeToLocation();
+  nav.replaceChildren();
+  for (const node of roots) nav.append(renderTreeItem([], node));
+  nav.scrollTop = scroll;
+  scrollCurrentTreeNode();
 }
 function renderFlowNav() {
   // 数据流视图下导航列出图中节点，点击即在图上选中，不切回代码结构。
   $('#nav-title').textContent = '数据流节点';
   $('#root-count').textContent = String(state.flowNodes.length).padStart(2, '0');
-  const nav = $('#module-nav'); nav.replaceChildren();
+  const nav = $('#module-nav');
+  nav.classList.remove('module-tree');
+  nav.removeAttribute('role');
+  nav.removeAttribute('aria-label');
+  nav.replaceChildren();
   for (const node of state.flowNodes) {
     const label = node.role?.label || node.label;
     const link = button('', 'module-link', () => { selectFlowNode(node); scrollIntoMap(node.element); });
@@ -570,7 +776,9 @@ function statusChoices(role) {
 }
 
 function renderDiagramControls() {
-  const flow = state.diagramKind === 'flow';
+  const flow = state.diagramKind === 'flow', pinned = pinIsOpen();
+  $('#pin-open').hidden = pinned;
+  $('#flow-view').hidden = pinned;
   $('#map-back').disabled = flow || state.path.length <= state.navigationPath.length;
   renderReturnButton();
   $('#edge-scope-label').hidden = flow;
@@ -586,7 +794,8 @@ function renderDiagramControls() {
   $('#cycles-panel').hidden = flow || !state.cyclesOnly;
   $('.map-footer .legend').hidden = flow;
   $('.flow-legend').hidden = !flow;
-  const select = $('#flow-select'); select.replaceChildren(); select.hidden = !flow || state.flows.length < 2;
+  const select = $('#flow-select'); select.replaceChildren(); select.hidden = pinned || !flow || state.flows.length < 2;
+  $('label[for="flow-select"]').hidden = select.hidden;
   state.flows.forEach((item, index) => { const option = element('option', '', item.title); option.value = index; select.append(option); });
   select.value = state.flowIndex;
 }
@@ -721,17 +930,17 @@ function renderEmptyDetail(panel, flow = false) {
 }
 function selectNode(id) {
   state.selected = state.view.nodes.find(node => node.id === id) || null;
-  renderDetail(); applyHighlight();
+  renderDetail(); applyHighlight(); renderRootNav(); updatePinnedLocation();
 }
 function clearMapSelection() {
   if (!state.selected && !state.hovered && !state.selectedFlow) return;
   state.selected = null; state.hovered = null; state.selectedFlow = null;
-  renderDetail(); applyHighlight();
+  renderDetail(); applyHighlight(); renderRootNav(); updatePinnedLocation();
 }
 function clickOutsideCanvas(event) {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  if (target.closest('#map-viewport, #map-return, #drawer, #drawer-backdrop, #toast')) return;
+  if (target.closest('#map-viewport, #map-return, #pinned-architecture, #pin-open, #drawer, #drawer-backdrop, #toast, #nav-float, #nav-open')) return;
   if (target.closest('.status-choices, .detail-actions, .relation-list, .module-link, .cycle-line, .coverage-modules, .trace-steps, .ai-section')) return;
   clearMapSelection();
 }
@@ -741,11 +950,35 @@ async function locateModule(module, options = {}) {
   $('#analysis-state').textContent = '正在定位模块…';
   try {
     const location = await api('/api/locate', { module });
-    if (request !== state.request) return;
-    await navigate(location.path, 'explore', location.nodeId, options);
+    if (request !== state.request) return false;
+    return await navigate(location.path, 'explore', location.nodeId, options);
   } catch (error) {
     if (request === state.request) { $('#analysis-state').textContent = '源码静态依赖'; toast(error.message); }
+    return false;
   }
+}
+
+async function locatePinnedTarget(target) {
+  if (target && typeof target === 'object' && target.module) return locateModule(target.module, { keepReturn: true });
+  const rawPath = target && typeof target === 'object' ? target.path : target;
+  const path = Array.isArray(rawPath) ? [...rawPath] : String(rawPath || '').split('/').filter(Boolean);
+  if (!path.length) return navigate([], 'explore', null, { expand: false, keepReturn: true });
+  // 文档角色和根层节点给的是包路径，不能交给只认识完整源码模块名的 /api/locate。
+  const request = ++state.request;
+  try {
+    const parent = path.slice(0, -1), id = path.at(-1);
+    const view = await fetchView(parent);
+    if (request !== state.request) return false;
+    const node = view.nodes.find(item => item.id === id)
+      || view.nodes.find(item => item.id.replace(/\|file$/, '') === id);
+    if (node) {
+      if (node.leaf) return locateModule(node.sourceModule, { keepReturn: true });
+      return navigate(path, 'explore', null, { expand: false, keepReturn: true });
+    }
+    if (typeof target === 'string') return locateModule(target, { keepReturn: true });
+    toast('此架构节点在当前代码结构中没有对应模块');
+  } catch (error) { if (request === state.request) toast(error.message); }
+  return false;
 }
 
 function focusSelectedNode() {
@@ -760,6 +993,7 @@ function focusSelectedNode() {
     top: Math.max(0, state.pan.y + (position.y + CARD.height / 2) * state.zoom - viewport.clientHeight / 2)
   });
   card.focus({ preventScroll: true });
+  mainCamera = captureMapCamera();
 }
 function enterNode(node) {
   if (node.leaf) showSource(node.sourceModule);
@@ -904,6 +1138,7 @@ function applyZoom() {
     world.style.transform = `translate(${state.pan.x}px, ${state.pan.y}px) scale(${state.zoom})`;
   }
   $('#zoom-value').textContent = `${Math.round(state.zoom * 100)}%`;
+  mainCamera = captureMapCamera();
 }
 function zoomBy(delta) { state.zoom = Math.min(1.8, Math.max(.15, state.zoom + delta)); applyZoom(); }
 function fitMap() {
@@ -921,16 +1156,28 @@ function fitMap() {
   applyZoom();
   // 小图通过平移居中；受最小缩放限制的大图滚动到中心。
   viewport.scrollTo(Math.max(0, (width - viewport.clientWidth) / 2), Math.max(0, (height - viewport.clientHeight) / 2));
+  mainCamera = captureMapCamera();
+}
+
+function captureMapCamera() {
+  const viewport = $('#map-viewport');
+  return { zoom: state.zoom, pan: { ...state.pan }, left: viewport.scrollLeft, top: viewport.scrollTop };
+}
+function restoreMapCamera(camera) {
+  state.zoom = camera.zoom; state.pan = { ...camera.pan }; applyZoom();
+  $('#map-viewport').scrollTo(camera.left, camera.top);
+  mainCamera = { ...camera, pan: { ...camera.pan } };
 }
 
 function setMapFullscreen(active) {
-  const grid = $('.view-grid'), viewport = $('#map-viewport'), control = $('#map-fullscreen');
+  const grid = $('.view-grid'), control = $('#map-fullscreen');
   if (grid.classList.contains('is-fullscreen') === active) return;
   const key = `${state.diagramKind}:${state.path.join('/')}`;
-  if (active) state.fullscreenCamera = { key, zoom: state.zoom, pan: { ...state.pan }, left: viewport.scrollLeft, top: viewport.scrollTop };
+  if (active) state.fullscreenCamera = { key, ...captureMapCamera() };
   else { state.restoreCamera = state.fullscreenCamera?.key === key ? state.fullscreenCamera : null; state.fullscreenCamera = null; }
   grid.classList.toggle('is-fullscreen', active); document.body.classList.toggle('map-fullscreen', active);
-  for (const el of $$('.rail,.topbar,.hero,.metrics,#architecture-coverage,#design-notes,#cycles-panel,.page-footer')) el.inert = active;
+  for (const el of $$('.topbar,#overview-page,#nav-float,#nav-open')) el.inert = active;
+  applyNavFloat();
   control.setAttribute('aria-label', active ? '退出全屏' : '全屏查看'); control.title = active ? '退出全屏（Esc）' : '全屏查看';
   control.setAttribute('aria-pressed', String(active)); control.replaceChildren(icon(active ? 'collapse' : 'expand'));
   control.focus({ preventScroll: true });
@@ -961,13 +1208,19 @@ function endCanvasDrag(event) {
 }
 let drawerReturnFocus;
 function openDrawer(title, path, kind) {
+  // 文档、AI 等面板会覆盖源码；同时废弃尚未完成的源码请求。
+  if (kind !== '源码文件') { ++state.sourceRequest; state.sourceModule = null; updatePinnedLocation(); }
   drawerReturnFocus = document.activeElement;
   $('#drawer-title').textContent = title; $('#drawer-path').textContent = path;
   $('#drawer-kind').textContent = kind; $('#drawer-content').replaceChildren();
   $('#drawer').hidden = false; $('#drawer-backdrop').hidden = false;
   document.body.style.overflow = 'hidden'; $('#drawer-close').focus();
 }
-function closeDrawer() { ++state.sourceRequest; $('#drawer').hidden = true; $('#drawer-backdrop').hidden = true; document.body.style.overflow = ''; drawerReturnFocus?.focus(); }
+function closeDrawer() {
+  ++state.sourceRequest; state.sourceModule = null;
+  $('#drawer').hidden = true; $('#drawer-backdrop').hidden = true; document.body.style.overflow = '';
+  updatePinnedLocation(); drawerReturnFocus?.focus();
+}
 function renderMarkdown(content, docPath) {
   const article = element('article', 'markdown');
   article.innerHTML = DOMPurify.sanitize(marked.parse(content), { USE_PROFILES: { html: true }, FORBID_TAGS: ['style', 'form', 'input', 'button'], FORBID_ATTR: ['style', 'id', 'name'] });
@@ -1021,17 +1274,20 @@ async function showSource(module, line) {
     const list = element('ol', 'source-list'); source.content.split('\n').forEach(line => list.append(element('li', '', line || ' '))); $('#drawer-content').append(list);
     const target = line && list.children[line - 1];
     if (target) { target.classList.add('source-target'); target.scrollIntoView({ block: 'center' }); }
+    state.sourceModule = module; updatePinnedLocation();
   } catch (error) { toast(error.message); }
 }
 async function reanalyze() {
   const control = $('#reanalyze'); control.disabled = true; control.classList.add('busy'); control.replaceChildren(icon('refresh'), element('span', '', '分析中…'));
   try {
-    state.project = await api('/api/reanalyze', {}, 'POST'); viewCache.clear(); updateProject();
+    state.project = await api('/api/reanalyze', {}, 'POST'); viewCache.clear(); resetTreeCaches(); updateProject();
     state.complexity = state.project.complexity; renderComplexityToggle();
     state.rootView = await fetchView([]);
+    loadPinnedArchitecture(); updatePinnedLocation();
     state.navigationView = null; state.navigationPath = [];
     const doc = state.project.documents.find(d => d.id === state.document?.id) || state.project.documents.find(d => d.scope === 'project');
-    await loadDocument(doc?.id || '');
+    try { await loadDocument(doc?.id || ''); }
+    catch (error) { await loadDocument(''); toast(`说明文档读取失败：${error.message}`); }
     let path = state.path;
     if (path.length && !(await fetchView(path)).nodes.length) path = [];
     await navigate(path, state.mode); toast('架构与项目说明已更新'); watchComplexity(); exploration.loadTraces();
@@ -1039,16 +1295,19 @@ async function reanalyze() {
   finally { control.disabled = false; control.classList.remove('busy'); control.replaceChildren(icon('refresh'), element('span', '', '重新分析')); }
 }
 $$('[data-icon]').forEach(el => el.replaceChildren(icon(el.dataset.icon)));
-$('#brand-home').addEventListener('click', event => { event.preventDefault(); navigate([], 'overview'); });
-$('#overview-nav').addEventListener('click', () => navigate([], 'overview'));
-$('#explore-nav').addEventListener('click', () => { setMode('explore'); fitMap(); });
-$('#start-explore').addEventListener('click', () => { setMode('explore'); fitMap(); });
+applyNavFloat();
+$('#brand-home').addEventListener('click', event => { event.preventDefault(); showOverview(); });
+$('#overview-nav').addEventListener('click', showOverview);
+$('#explore-nav').addEventListener('click', showExplore);
+$('#start-explore').addEventListener('click', showExplore);
+$('#nav-close').addEventListener('click', () => setNavFloat(false));
+$('#nav-open').addEventListener('click', () => setNavFloat(true));
 $('#document-select').addEventListener('change', async event => { try { await loadDocument(event.target.value); } catch (error) { toast(error.message); } });
 $('#document-open').addEventListener('click', () => showDocument());
 $('#search').addEventListener('input', applyHighlight);
 for (const [id, kind] of [['code-view', 'code'], ['flow-view', 'flow']]) $('#' + id).addEventListener('click', () => {
   state.diagramKind = kind; state.selected = null; state.selectedFlow = null; state.cyclesOnly = false;
-  $('#cycle-filter').classList.remove('active'); renderMap(); renderDetail(); renderRootNav(); fitMap();
+  $('#cycle-filter').classList.remove('active'); renderMap(); renderDetail(); renderRootNav(); fitMap(); updatePinnedLocation();
 });
 $('#flow-select').addEventListener('change', event => { state.flowIndex = Number(event.target.value); state.selectedFlow = null; renderMap(); renderDetail(); });
 $('#show-edges').addEventListener('change', applyHighlight);
@@ -1058,8 +1317,14 @@ $('#map-back').addEventListener('click', navigateUp);
 $('#map-return').addEventListener('click', returnBack);
 $('#zoom-in').addEventListener('click', () => zoomBy(.1)); $('#zoom-out').addEventListener('click', () => zoomBy(-.1)); $('#zoom-fit').addEventListener('click', fitMap);
 $('#map-fullscreen').addEventListener('click', toggleMapFullscreen);
+$('#pin-open').addEventListener('click', () => pinnedArchitecture.open());
 $('#map-viewport').addEventListener('pointerdown', beginCanvasDrag);
 $('#map-viewport').addEventListener('pointermove', moveCanvasDrag);
+$('#map-viewport').addEventListener('scroll', () => {
+  const bounds = $('#map-viewport').getBoundingClientRect();
+  // 浏览器会在尺寸改变时夹紧 scroll；先让 ResizeObserver 恢复改变前的 camera。
+  if (bounds.width === observedViewportWidth && bounds.height === observedViewportHeight) mainCamera = captureMapCamera();
+});
 for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) $('#map-viewport').addEventListener(event, endCanvasDrag);
 $('#map-viewport').addEventListener('wheel', event => { if (event.ctrlKey || event.metaKey) { event.preventDefault(); zoomBy(event.deltaY < 0 ? .05 : -.05); } }, { passive: false });
 $('#cycle-filter').addEventListener('click', () => { state.cyclesOnly = !state.cyclesOnly; applyHighlight(); renderCycles(); if (state.cyclesOnly) $('#cycles-panel').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); });
@@ -1077,22 +1342,25 @@ document.addEventListener('keydown', event => {
 });
 let observedViewportWidth = 0;
 let observedViewportHeight = 0;
+let observedFullscreen = false;
 new ResizeObserver(() => {
   if (!state.view) return;
-  // 平移可能让滚动条出现；只在画布外框真正改变时重排，避免拖动被重置。
-  const bounds = $('#map-viewport').getBoundingClientRect();
-  const width = bounds.width;
-  const height = bounds.height;
-  if (width === observedViewportWidth && height === observedViewportHeight) return;
-  if (width !== observedViewportWidth) {
-    observedViewportWidth = width;
+  const viewport = $('#map-viewport'), bounds = viewport.getBoundingClientRect();
+  // pin 放大时主画布可能被隐藏；恢复分屏后仍使用原来的布局和 camera。
+  if (!bounds.width || !bounds.height) return;
+  const fullscreen = $('.view-grid').classList.contains('is-fullscreen');
+  const fullscreenChanged = fullscreen !== observedFullscreen;
+  if (bounds.width === observedViewportWidth && bounds.height === observedViewportHeight && !fullscreenChanged) return;
+  const camera = mainCamera || captureMapCamera();
+  observedViewportWidth = bounds.width; observedViewportHeight = bounds.height; observedFullscreen = fullscreen;
+  if (fullscreenChanged) {
     if (state.diagramKind === 'code') renderMap();
+    if (state.restoreCamera) { restoreMapCamera(state.restoreCamera); state.restoreCamera = null; }
+    else { fitMap(); if (state.selected && state.diagramKind === 'code') focusSelectedNode(); }
+  } else {
+    // pin 开关、拖分隔条只改变可见空间；不重排节点、不重新适应画布。
+    restoreMapCamera(camera);
   }
-  observedViewportHeight = height;
-  if (state.restoreCamera) {
-    const camera = state.restoreCamera; state.restoreCamera = null;
-    state.zoom = camera.zoom; state.pan = camera.pan; applyZoom(); $('#map-viewport').scrollTo(camera.left, camera.top);
-  } else { fitMap(); if (state.selected && state.diagramKind === 'code') focusSelectedNode(); }
 }).observe($('#map-viewport'));
 // AI 辅助探索（解释、上下文包、调用链路）放在独立模块，只借用这里的页面能力。
 const exploration = createExploration({
@@ -1105,13 +1373,26 @@ const exploration = createExploration({
   refresh: () => { if (!state.view) return; renderMap(); applyZoom(); renderDetail(); },
   refreshDetail: () => renderDetail(),
 });
+pinnedArchitecture = createPinnedArchitecture({
+  host: $('#pinned-architecture'), api, toast, onVisibilityChange: onPinVisibilityChange,
+  locateModule: async destination => {
+    const target = returnTarget(state.selected, { allowEmpty: true, camera: true });
+    const located = await locatePinnedTarget(destination);
+    if (!located) return false;
+    if (target) { state.returnTrail.push(target); renderReturnButton(); }
+    return true;
+  },
+});
 (async function initialize() {
   try {
     state.project = await api('/api/project'); updateProject();
     $('#edge-scope').value = state.project.edgeScope || 'focus';
     state.complexity = state.project.complexity || state.complexity; renderComplexityToggle();
-    const doc = state.project.documents.find(d => d.scope === 'project'); await loadDocument(doc?.id || '');
-    await navigate([], 'overview');
+    state.rootView = await fetchView([]); loadPinnedArchitecture();
+    const doc = state.project.documents.find(d => d.scope === 'project');
+    try { await loadDocument(doc?.id || ''); }
+    catch (error) { await loadDocument(''); toast(`说明文档读取失败：${error.message}`); }
+    await navigate([], 'explore');
     exploration.loadTraces();
     if (state.complexity.status === 'running') watchComplexity();
   } catch (error) { $('#hero-summary').textContent = `加载失败：${error.message}`; toast(error.message); }

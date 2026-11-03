@@ -1,0 +1,40 @@
+flowchart TD
+    client["前端 / 外部业务系统"]
+    upstream["上游消息（阿福行为、medaicore、营销等）"]
+    external["外部系统（营销中台、会员、AI、推送等）"]
+    db[("OceanBase / Lindorm / 缓存")]
+    rpc["rpc：RPC 与开放接口"]
+    mq["mq：消息消费"]
+    scheduler["scheduler：定时任务"]
+    eventcenter["eventcenter：事件中心"]
+    aq["aq：阿福增长活动"]
+    attribute["attribute：归因与投放"]
+    activecare["activecare：主动关怀"]
+    rec["rec：推荐与卡片"]
+    benefit["benefit：会员权益与交易"]
+    integration["integration：外部服务集成"]
+    dal["dal：数据访问"]
+    client -->|TR / 开放接口 / HTTP 请求| rpc
+    upstream -->|SOFAMQ 消息| mq
+    rpc -->|查询与活动操作| aq
+    rpc -->|事件、任务状态查询| eventcenter
+    rpc -->|归因、投承查询| attribute
+    rpc -->|关怀任务管理| activecare
+    rpc -->|推荐请求| rec
+    rpc -->|权益查询| benefit
+    mq -->|用户行为事件| eventcenter
+    mq -->|关怀动作| activecare
+    mq -->|点击与转化行为| attribute
+    scheduler -->|补偿、扫描、对账| activecare
+    scheduler -->|派发投放| attribute
+    eventcenter -->|任务完成 / 资格结果| aq
+    aq -->|活动状态、奖励记录| dal
+    eventcenter -->|原子事件、任务状态| dal
+    activecare -->|关怀任务与提醒实例| dal
+    dal --> db
+    aq -->|发奖、核券、查人群| integration
+    attribute -->|转化回传、人群标签| integration
+    activecare -->|触达消息| integration
+    rec -->|推荐与内容查询| integration
+    benefit -->|会员与礼包查询| integration
+    integration -->|RPC 调用| external

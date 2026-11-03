@@ -2,6 +2,7 @@
 .cpcache/
 .playwright-cli/
 target/
+tmp/
 examples/
 __pycache__/
 *.pyc

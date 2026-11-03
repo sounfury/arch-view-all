@@ -162,7 +162,7 @@
             (check! (contains-text? mixed "\"nodeId\":\"app|file\"") "同名文件与包并存时必须定位文件节点")
             (check! (contains-text? root-leaf "\"path\":[]") "顶层源码文件必须定位到根视图"))
           (check! (= 404 (:status (get! app "/api/locate?module=unknown"))) "未知模块必须明确返回未找到")
-          (doseq [path ["/" "/app.css" "/app.js" "/architecture_document.js" "/vendor/marked.umd.js" "/vendor/purify.min.js" "/vendor/mermaid.min.js"]]
+          (doseq [path ["/" "/app.css" "/app.js" "/architecture_document.js" "/pinned_architecture.js" "/vendor/marked.umd.js" "/vendor/purify.min.js" "/vendor/mermaid.min.js"]]
             (check! (= 200 (:status (get! app path))) (str "Local asset must be served: " path)))
           (check! (= 404 (:status (get! app "/api/document?id=../outside.md"))) "Documents cannot read arbitrary files")
           (check! (= 404 (:status (get! app "/api/source?module=unknown"))) "Unknown source must return 404")

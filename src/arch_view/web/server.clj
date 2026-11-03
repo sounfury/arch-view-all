@@ -173,6 +173,7 @@
    "/app.css" ["app.css" "text/css; charset=utf-8"]
    "/app.js" ["app.js" "text/javascript; charset=utf-8"]
    "/architecture_document.js" ["architecture_document.js" "text/javascript; charset=utf-8"]
+   "/pinned_architecture.js" ["pinned_architecture.js" "text/javascript; charset=utf-8"]
    "/exploration.js" ["exploration.js" "text/javascript; charset=utf-8"]
    "/vendor/mermaid.min.js" ["vendor/mermaid.min.js" "text/javascript; charset=utf-8"]
    "/vendor/marked.umd.js" ["vendor/marked.umd.js" "text/javascript; charset=utf-8"]
