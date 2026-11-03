@@ -1,5 +1,5 @@
 ;; 职责：按当前浏览的软件包汇总模块和依赖，让架构图能够逐层展开到文件。
-;; 核心入口：生成当前层的架构视图（view-architecture）。
+;; 核心入口：生成当前层的架构视图（view-architecture）；按架构缓存的包树索引（architecture-index）。
 
 ;; mutation-tested: 2026-03-08
 (ns arch-view.domain.architecture-projection
@@ -52,19 +52,19 @@
   (layers/assign-layers {:nodes nodes :edges edges}))
 
 (defn- scoped-modules
-  [all-modules namespace-path]
+  [segments all-modules namespace-path]
   (->> all-modules
        (filter (fn [m]
-                 (let [parts (namespace-segments m)]
+                 (let [parts (segments m)]
                    (and (prefix? namespace-path parts)
                         (> (count parts) (count namespace-path))))))
        set))
 
 (defn- module->child
-  [scoped namespace-path]
+  [segments scoped namespace-path]
   (into {}
         (for [m scoped
-              :let [parts (namespace-segments m)]]
+              :let [parts (segments m)]]
           [m (nth parts (count namespace-path))])))
 
 (defn- modules-by-child
@@ -75,11 +75,11 @@
           scoped))
 
 (defn- child->info
-  [modules-by-child namespace-path]
+  [segments modules-by-child namespace-path]
   (into {}
         (for [[child modules] modules-by-child
               :let [exact-module (some (fn [m]
-                                         (when (= (namespace-segments m)
+                                         (when (= (segments m)
                                                   (conj (vec namespace-path) child))
                                            m))
                                        modules)
@@ -150,56 +150,92 @@
                       nbrs)]
           (recur queue'' indeg' (inc seen)))))))
 
-(defn- subtree-cycle-detector
-  [all-modules classified]
-  (let [memo (atom {})]
-    (letfn [(subtree-cycle? [namespace-path]
-              (if (contains? @memo namespace-path)
-                (get @memo namespace-path)
-                (let [scoped (scoped-modules all-modules namespace-path)
-                      module->child-map (module->child scoped namespace-path)
-                      children (set (vals module->child-map))
-                      level-edges (->> classified
-                                       (keep (fn [{:keys [from to]}]
-                                               (let [from-child (get module->child-map from)
-                                                     to-child (get module->child-map to)]
-                                                 (when (and from-child to-child
-                                                            (not= from-child to-child))
-                                                   {:from from-child :to to-child}))))
-                                       set)
-                      level-cycle? (graph-has-cycle? children level-edges)
-                      descendant-cycle? (some true?
-                                              (for [child children
-                                                    :let [child-path (conj (vec namespace-path) child)
-                                                          deeper? (some (fn [m]
-                                                                          (> (count (namespace-segments m))
-                                                                             (count child-path)))
-                                                                        scoped)]
-                                                    :when deeper?]
-                                                (subtree-cycle? child-path)))
-                      result (boolean (or level-cycle? descendant-cycle?))]
-                  (swap! memo assoc namespace-path result)
-                  result)))]
-      subtree-cycle?)))
+;; ===== 包树索引 =====
+;; 每次浏览都重扫全部模块和依赖会随文件数平方增长；索引按架构只建一次，各层直接查表。
+
+(defn- edge-level
+  "两端模块只在最长公共包前缀那一层形成同层依赖；返回 [包路径 起点子包 终点子包]。"
+  [a b]
+  (let [limit (min (count a) (count b))
+        k (loop [k 0]
+            (if (and (< k limit) (= (nth a k) (nth b k))) (recur (inc k)) k))]
+    (when (< k limit)
+      [(subvec a 0 k) (nth a k) (nth b k)])))
+
+(defn- children-index
+  [segments]
+  (reduce (fn [acc parts]
+            (reduce (fn [inner k]
+                      (update inner (subvec parts 0 k) (fnil conj #{}) (nth parts k)))
+                    acc
+                    (range (count parts))))
+          {}
+          (vals segments)))
+
+(defn- level-edges-index
+  [segments classified]
+  (reduce (fn [acc {:keys [from to]}]
+            (let [a (get segments from)
+                  b (get segments to)]
+              (if-let [[path f t] (when (and a b) (edge-level a b))]
+                (update acc path (fnil conj #{}) {:from f :to t})
+                acc)))
+          {}
+          classified))
+
+(defn tree-index
+  "建立包树索引：模块分段、每个包的直接子包，以及每个包内子包之间的依赖。"
+  [architecture]
+  (binding [*namespace-root-depth* (get-in architecture [:guidance :namespace-root-depth] 1)]
+    (let [modules (or (get-in architecture [:graph :nodes]) #{})
+          segments (into {} (map (juxt identity namespace-segments)) modules)]
+      {:segments segments
+       :children (children-index segments)
+       :level-edges (level-edges-index segments (:classified-edges architecture))
+       :memo (atom {})})))
+
+(defn- memoized
+  [index key compute]
+  (let [memo (:memo index)]
+    (if-let [[_ value] (find @memo key)]
+      value
+      (let [value (compute)]
+        (swap! memo assoc key value)
+        value))))
+
+(defn- deeper?
+  [index path]
+  (contains? (:children index) path))
+
+(defn- subtree-cycle?
+  [index path]
+  (memoized index [:cycle? path]
+            #(let [children (get-in index [:children path] #{})]
+               (boolean
+                (or (graph-has-cycle? children (get-in index [:level-edges path] #{}))
+                    (some (fn [child]
+                            (let [child-path (conj path child)]
+                              (and (deeper? index child-path) (subtree-cycle? index child-path))))
+                          children))))))
 
 (defn- node-leaf-map
-  [nodes node->modules-map namespace-path]
+  [segments nodes node->modules-map namespace-path]
   (into {}
         (for [n nodes
               :let [modules (get node->modules-map n)
                     leaf? (every? (fn [m]
-                                    (= (count (namespace-segments m))
+                                    (= (count (segments m))
                                        (inc (count namespace-path))))
                                   modules)]]
           [n leaf?])))
 
 (defn- node-source-file-map
-  [nodes node->modules-map module->source-file-all namespace-path]
+  [segments nodes node->modules-map module->source-file-all namespace-path]
   (into {}
         (for [n nodes
               :let [modules (get node->modules-map n)
                     exact-module (some (fn [m]
-                                         (when (= (count (namespace-segments m))
+                                         (when (= (count (segments m))
                                                   (inc (count namespace-path)))
                                            m))
                                        modules)
@@ -234,32 +270,20 @@
        (str/join "->")))
 
 (defn- subtree-cycle-lines
-  [all-modules classified namespace-path]
-  (let [scoped (scoped-modules all-modules namespace-path)
-        module->child-map (module->child scoped namespace-path)
-        children (set (vals module->child-map))
-        level-edges (->> classified
-                         (keep (fn [{:keys [from to]}]
-                                 (let [from-child (get module->child-map from)
-                                       to-child (get module->child-map to)]
-                                   (when (and from-child to-child
-                                              (not= from-child to-child))
-                                     {:from from-child :to to-child}))))
-                         set)
-        level-cycles (get (layers/assign-layers {:nodes children :edges level-edges}) :cycles [])
-        descendant-cycles (mapcat (fn [child]
-                                    (let [child-path (conj (vec namespace-path) child)
-                                          deeper? (some (fn [m]
-                                                          (> (count (namespace-segments m))
-                                                             (count child-path)))
-                                                        scoped)]
-                                      (when deeper?
-                                        (subtree-cycle-lines all-modules classified child-path))))
-                                  (sort children))]
-    (->> (concat (map #(format-cycle-line namespace-path %) level-cycles)
-                 descendant-cycles)
-         distinct
-         vec)))
+  [index namespace-path]
+  (memoized index [:cycle-lines namespace-path]
+            #(let [children (get-in index [:children namespace-path] #{})
+                   level-edges (get-in index [:level-edges namespace-path] #{})
+                   level-cycles (get (layers/assign-layers {:nodes children :edges level-edges}) :cycles [])
+                   descendant-cycles (mapcat (fn [child]
+                                               (let [child-path (conj namespace-path child)]
+                                                 (when (deeper? index child-path)
+                                                   (subtree-cycle-lines index child-path))))
+                                             (sort children))]
+               (->> (concat (map (fn [cycle] (format-cycle-line namespace-path cycle)) level-cycles)
+                            descendant-cycles)
+                    distinct
+                    vec))))
 
 (defn- aggregate-edge
   [old type]
@@ -298,14 +322,15 @@
           classified))
 
 (defn- project-architecture
-  [architecture namespace-path]
-  (let [all-modules (or (get-in architecture [:graph :nodes]) #{})
+  [architecture index namespace-path]
+  (let [namespace-path (vec namespace-path)
+        segments (:segments index)
+        all-modules (or (get-in architecture [:graph :nodes]) #{})
         module->source-file-all (or (get-in architecture [:graph :module->source-file]) {})
-        subtree-cycle? (subtree-cycle-detector all-modules (:classified-edges architecture))
-        scoped (scoped-modules all-modules namespace-path)
-        module->child-map (module->child scoped namespace-path)
+        scoped (scoped-modules segments all-modules namespace-path)
+        module->child-map (module->child segments scoped namespace-path)
         by-child (modules-by-child scoped module->child-map)
-        child->info-map (child->info by-child namespace-path)
+        child->info-map (child->info segments by-child namespace-path)
         module->node-map (module->node child->info-map)
         node->modules-map (node->modules module->node-map)
         nodes (set (keys node->modules-map))
@@ -313,9 +338,9 @@
         module->kind (node-kind-map nodes node->modules-map abstract-source)
         module->cycle? (into {}
                              (for [n nodes]
-                               [n (subtree-cycle? (conj (vec namespace-path) (node-child-name n)))]))
-        module->leaf? (node-leaf-map nodes node->modules-map namespace-path)
-        module->source-file (node-source-file-map nodes node->modules-map module->source-file-all namespace-path)
+                               [n (subtree-cycle? index (conj namespace-path (node-child-name n)))]))
+        module->leaf? (node-leaf-map segments nodes node->modules-map namespace-path)
+        module->source-file (node-source-file-map segments nodes node->modules-map module->source-file-all namespace-path)
         module->display-label (node-display-label-map nodes module->leaf? module->source-file)
         module->full-name (node-full-name-map nodes module->leaf? module->source-file namespace-path)
         pairs (edges-by-pair (:classified-edges architecture) module->node-map)
@@ -324,7 +349,7 @@
                                 {:from f :to t :type type :count count}))
         display-edges (set (for [[[f t] {:keys [type count]}] display-pairs]
                              {:from f :to t :type type :count count}))
-        cycle-lines (subtree-cycle-lines all-modules (:classified-edges architecture) namespace-path)
+        cycle-lines (subtree-cycle-lines index namespace-path)
         graph {:nodes nodes
                :edges (set (for [{:keys [from to]} classified-edges] {:from from :to to}))
                :abstract-modules (set (for [[n k] module->kind :when (= k :abstract)] n))}
@@ -346,7 +371,20 @@
      :module->full-name module->full-name
      :cycle-lines cycle-lines}))
 
+;; 架构数据不可变；网页和桌面端会对同一份架构反复下钻，只缓存最近一份的索引。
+(def ^:private index-cache (atom nil))
+
+(defn architecture-index
+  "返回该架构的包树索引；同一架构对象复用上次结果。"
+  [architecture]
+  (let [[cached index] @index-cache]
+    (if (identical? cached architecture)
+      index
+      (let [index (tree-index architecture)]
+        (reset! index-cache [architecture index])
+        index))))
+
 (defn view-architecture
   [architecture namespace-path]
   (binding [*namespace-root-depth* (get-in architecture [:guidance :namespace-root-depth] 1)]
-    (project-architecture architecture namespace-path)))
+    (project-architecture architecture (architecture-index architecture) namespace-path)))

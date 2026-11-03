@@ -66,6 +66,27 @@
       (should= false (get (:module->cycle? alpha-view) "api"))
       (should= false (get (:module->cycle? alpha-view) "impl"))))
 
+  (it "reports deep cycles from the root and rebuilds the index for a new architecture"
+    (let [nodes #{"app.a.x.One" "app.a.x.Two" "app.a.y.Three" "app.b.Four"}
+          cyclic {:guidance {:namespace-root-depth 0}
+                  :graph {:nodes nodes}
+                  :classified-edges #{{:from "app.a.x.One" :to "app.a.x.Two" :type :direct}
+                                      {:from "app.a.x.Two" :to "app.a.x.One" :type :direct}
+                                      {:from "app.b.Four" :to "app.a.y.Three" :type :direct}
+                                      {:from "app.b.Four" :to "missing.Module" :type :direct}}}
+          acyclic (update cyclic :classified-edges disj {:from "app.a.x.Two" :to "app.a.x.One" :type :direct})
+          root-view (sut/view-architecture cyclic [])]
+      (should= true (get (:module->cycle? root-view) "app"))
+      (should= 1 (count (:cycle-lines root-view)))
+      (should (re-find #"^app\.a\.x\.(One|Two)->" (first (:cycle-lines root-view))))
+      (should= false (get (:module->cycle? (sut/view-architecture cyclic ["app" "a"])) "y"))
+      (should= #{{:from "b" :to "a" :type :direct :count 1}}
+               (:classified-edges (sut/view-architecture cyclic ["app"])))
+      ;; 索引按架构对象缓存，重新分析得到的新架构不能沿用旧的循环结论。
+      (should= false (get (:module->cycle? (sut/view-architecture acyclic [])) "app"))
+      (should= [] (:cycle-lines (sut/view-architecture acyclic [])))
+      (should= true (get (:module->cycle? (sut/view-architecture cyclic [])) "app"))))
+
   (it "handles helper functions for mixed leaf identifiers"
     (let [node (sut/mixed-leaf-node-id "acceptance")]
       (should= "acceptance|file" node)

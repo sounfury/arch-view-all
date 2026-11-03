@@ -22,8 +22,8 @@
                   "tests/pom.xml" "tests/src/test/java/Test.java"
                   "plain/src/main/java/C.java" "aggregate/pom.xml"]]
       (write-source @root path ""))
-    (should= [{:name (.getName @root) :directory "." :source-paths ["src/main/java"]}
-              {:name "api" :directory "api" :source-paths ["api/src/main/java"]}]
+    (should= [{:name (.getName @root) :build-tool "maven" :directory "." :source-paths ["src/main/java"]}
+              {:name "api" :build-tool "gradle" :directory "api" :source-paths ["api/src/main/java"]}]
              (sut/build-modules (str @root) :java)))
 
   (it "忽略隐藏目录、构建输出、依赖和 buildSrc"
@@ -37,8 +37,8 @@
                   "lib/src/main/java/B.java" "lib/src/test/kotlin/Test.kt"
                   "java/pom.xml" "java/src/main/java/C.java"]]
       (write-source @root path ""))
-    (should= [{:name "java" :directory "java" :source-paths ["java/src/main/java"]}
-              {:name "lib" :directory "lib" :source-paths ["lib/src/main/kotlin" "lib/src/main/java"]}]
+    (should= [{:name "java" :build-tool "maven" :directory "java" :source-paths ["java/src/main/java"]}
+              {:name "lib" :build-tool "gradle" :directory "lib" :source-paths ["lib/src/main/kotlin" "lib/src/main/java"]}]
              (sut/build-modules (str @root) :kotlin))
     (should= [] (sut/build-modules (str @root) :clojure)))
 

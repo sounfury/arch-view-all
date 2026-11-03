@@ -168,6 +168,14 @@ button.node.selected { border-color:#3a7950; box-shadow:0 0 0 2px #38765015,0 4p
 button.node.dimmed { opacity:.27; }
 button.node.matched { border-color:#b3934f; box-shadow:0 0 0 2px #b3934f15; }
 button.node.abstract { background:#f6faee; }
+/* Maven/Gradle 构建模块：顶部色条和工具标签，与普通软件包区分。 */
+button.node.build-module { border-top:3px solid var(--green); padding-top:15px; background:linear-gradient(180deg,#f2f8f3 0,#fff 46px); }
+button.node.build-module .node-symbol { color:var(--green); }
+.build-tag { flex:none; padding:2px 6px; border-radius:4px; font:600 9px/1.4 var(--mono); letter-spacing:.5px; text-transform:uppercase; color:var(--green); background:var(--green-soft); border:1px solid #cfe1d3; }
+.module-link.build-module>.icon { color:var(--green); }
+.build-crumb { display:inline-flex; align-items:center; gap:5px; }
+.build-crumb .icon { width:13px; height:13px; color:var(--green); }
+.build-module-info { margin:6px 0 10px; font-size:11px; color:var(--muted); }
 .node-heading { display:flex; align-items:center; gap:9px; font-size:14px; font-weight:600; min-width:0; }
 .node-symbol { color:#7c9c6a; width:18px; height:18px; }
 .node-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }

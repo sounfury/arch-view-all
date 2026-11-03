@@ -1,5 +1,5 @@
 /*
- * 职责：控制网页架构地图、逐层浏览、缩放拖动、页面内全屏，以及文档和源码面板。
+ * 职责：控制网页架构地图、逐层浏览（含 Maven/Gradle 构建模块标注与视图缓存）、缩放拖动、页面内全屏，以及文档和源码面板。
  * 核心入口：页面初始化流程（initialize），页面打开后自动读取项目数据。
  */
 
@@ -35,6 +35,42 @@ function button(text, className, action) {
 function icon(name, className = '') {
   const svg = svgElement('svg', { viewBox: '0 0 24 24', class: `icon ${className}`, 'aria-hidden': 'true', focusable: 'false' });
   svg.append(svgElement('use', { href: `#icon-${name}` })); return svg;
+}
+// 架构数据在重新分析或复杂度完成前不会变化，同一层只向服务端请求一次；失败的请求不缓存。
+const viewCache = new Map();
+function fetchView(path) {
+  const key = Array.isArray(path) ? path.join('/') : String(path || '');
+  if (!viewCache.has(key)) {
+    viewCache.set(key, api('/api/view', key ? { path: key } : {}).catch(error => { viewCache.delete(key); throw error; }));
+  }
+  return viewCache.get(key);
+}
+// Maven/Gradle 构建模块只出现在根层第一段；旧导出数据没有构建工具时统称构建模块。
+const BUILD_TOOLS = { maven: 'Maven', gradle: 'Gradle' };
+function buildModuleKind(module) {
+  const tool = BUILD_TOOLS[module?.buildTool];
+  return tool ? `${tool} 模块` : '构建模块';
+}
+function buildModuleDirectory(module) {
+  return module.directory === '.' ? '项目根目录' : `${module.directory}/`;
+}
+function buildModuleNamed(name) {
+  return (state.project?.buildModules || []).find(module => module.name === name);
+}
+function buildModuleSummary() {
+  const modules = state.project.buildModules || [];
+  const tools = [...new Set(modules.map(module => BUILD_TOOLS[module.buildTool]).filter(Boolean))];
+  return `${modules.length} 个${tools.length ? ' ' + tools.join('/') + ' ' : ''}构建模块`;
+}
+// 在构建模块内部时标题保留所属模块，自动展开多层单子包后也能看出当前在哪个模块。
+function codeMapTitle() {
+  const path = state.path, module = path.length && buildModuleNamed(path[0]);
+  if (!path.length) return state.project.buildModules?.length ? `全局架构地图 · ${buildModuleSummary()}` : '全局架构地图';
+  if (!module) return `${path.at(-1)} · 内部架构`;
+  return path.length === 1 ? `${path[0]} · ${buildModuleKind(module)}内部架构` : `${path.at(-1)} · 内部架构 · ${buildModuleKind(module)} ${path[0]}`;
+}
+function nodeIcon(node) {
+  return node.buildModule ? 'module' : node.leaf ? 'file' : 'folder';
 }
 async function api(path, params = {}, method = 'GET') {
   const query = new URLSearchParams(params);
@@ -72,7 +108,8 @@ function updateProject() {
   const p = state.project;
   document.title = `${p.name} · Arch View`;
   $('#project-name').textContent = p.name;
-  $('#project-language').textContent = `${String(p.language).toUpperCase()} / ${(p.sourcePaths || []).join(' · ')}`;
+  // 多模块项目的源码目录很长，改为显示构建模块概况。
+  $('#project-language').textContent = `${String(p.language).toUpperCase()} / ${p.buildModules?.length ? buildModuleSummary() : (p.sourcePaths || []).join(' · ')}`;
   $('#project-path').textContent = p.root; $('#project-path').title = p.root;
   $('#metric-modules').textContent = p.moduleCount;
   $('#metric-edges').textContent = p.dependencyCount;
@@ -143,7 +180,7 @@ function updateOverview() {
   const intro = tokens.find(t => t.type === 'paragraph' && plain(t.text));
   $('#hero-title').textContent = heading ? plain(heading.text) : state.project.name;
   $('#hero-summary').textContent = intro ? plain(intro.text) :
-    `${state.project.name} 包含 ${state.project.moduleCount} 个源码模块。下方地图展示模块边界与实际代码依赖，点击模块可继续查看内部结构。`;
+    `${state.project.name} 包含 ${state.project.buildModules?.length ? buildModuleSummary() + '、' : ''}${state.project.moduleCount} 个源码模块。下方地图展示模块边界与实际代码依赖，点击模块可继续查看内部结构。`;
   $('#document-provenance').textContent = doc ? `说明来源：${doc.path} · 结构来源：源码静态分析` : '结构来自源码 · 未选择说明文档';
   $('#document-open').disabled = !doc;
   const notes = $('#design-notes'); notes.replaceChildren();
@@ -169,7 +206,7 @@ async function expandSinglePackages(view, path, request) {
     const nodes = visibleNodes(view);
     if (nodes.length !== 1 || nodes[0].leaf) break;
     const nextPath = [...path, nodes[0].id.replace(/\|file$/, '')];
-    const nextView = await api('/api/view', { path: nextPath.join('/') });
+    const nextView = await fetchView(nextPath);
     if (request !== state.request) return null;
     if (!nextView.nodes.length) break;
     path = nextPath; view = nextView;
@@ -183,7 +220,7 @@ async function navigate(path, mode = 'explore', selectedId = null, { expand = tr
   const fromOverview = !path.length && mode === 'overview';
   $('#analysis-state').textContent = '正在读取结构…';
   try {
-    let view = await api('/api/view', { path: path.join('/') });
+    let view = await fetchView(path);
     if (request !== state.request) return;
     const atRoot = !path.length;
     if (atRoot) { state.rootView = view; state.navigationView = null; renderCoverage(); }
@@ -203,7 +240,7 @@ async function navigate(path, mode = 'explore', selectedId = null, { expand = tr
     state.selectedFlow = null;
     state.diagramKind = fromOverview && state.flows.length ? 'flow' : 'code';
     setMode(mode); $('#search').value = ''; $('#cycle-filter').classList.remove('active');
-    $('#map-title').textContent = path.length ? `${path.at(-1)} · 内部架构` : '全局架构地图';
+    $('#map-title').textContent = codeMapTitle();
     $('#metric-groups').textContent = view.nodes.length;
     $('#metric-cycles').textContent = view.cycles.length;
     $('#cycle-filter').classList.toggle('has-cycles', view.cycles.length > 0);
@@ -225,7 +262,12 @@ async function navigate(path, mode = 'explore', selectedId = null, { expand = tr
 }
 function renderBreadcrumbs() {
   const nav = $('#breadcrumbs'); nav.replaceChildren(button('项目总览', '', () => navigate([], 'overview')));
-  state.path.forEach((part, index) => { nav.append(element('i', '', '/'), button(part, '', () => navigate(state.path.slice(0, index + 1), 'explore', null, { expand: false }))); });
+  state.path.forEach((part, index) => {
+    const crumb = button(part, '', () => navigate(state.path.slice(0, index + 1), 'explore', null, { expand: false }));
+    const module = index === 0 && buildModuleNamed(part);
+    if (module) { crumb.classList.add('build-crumb'); crumb.prepend(icon('module')); crumb.title = `${buildModuleKind(module)} · ${buildModuleDirectory(module)}`; }
+    nav.append(element('i', '', '/'), crumb);
+  });
 }
 // 智慧返回：记住临时跳转前的层级和选中节点，可逐级跳回。
 function rememberReturn(node = state.selected) {
@@ -277,9 +319,12 @@ function renderRootNav() {
   const nav = $('#module-nav'); nav.replaceChildren();
   for (const node of visibleNodes(view)) {
     const link = button('', 'module-link', () => node.leaf ? navigate(path, 'explore', node.id) : navigate([...path, node.id.replace(/\|file$/, '')]));
-    const copy = element('span', 'module-copy'); copy.append(element('span', 'module-name', navRoleFor(node, path)?.label || node.label), element('small', '', node.label));
-    link.append(icon(node.leaf ? 'file' : 'folder'), copy, element('span', 'module-count', node.moduleCount));
-    link.title = navRoleFor(node, path)?.label || node.fullName;
+    const module = node.buildModule;
+    const copy = element('span', 'module-copy'); copy.append(element('span', 'module-name', navRoleFor(node, path)?.label || node.label),
+      element('small', '', module ? `${buildModuleKind(module)} · ${buildModuleDirectory(module)}` : node.label));
+    link.append(icon(nodeIcon(node)), copy, element('span', 'module-count', node.moduleCount));
+    link.classList.toggle('build-module', Boolean(module));
+    link.title = navRoleFor(node, path)?.label || (module ? `${buildModuleKind(module)} ${node.label}（${buildModuleDirectory(module)}）` : node.fullName);
     link.classList.toggle('current', path.every((part, index) => state.path[index] === part) &&
       (state.path[path.length] === node.id || (state.path.length === path.length && state.selected?.id === node.id))); nav.append(link);
   }
@@ -393,15 +438,17 @@ function renderMap() {
   for (const node of nodes) {
     const position = layout.positions.get(node.id);
     if (!layers.has(node.layer)) { layers.add(node.layer); const caption = element('span', 'layer-caption', `依赖层 ${node.layer + 1}`); caption.style.top = `${position.y - 24}px`; world.append(caption); }
-    const card = button('', `node${node.abstract ? ' abstract' : ''}${node.cycle ? ' cyclic' : ''}`, () => { selectNode(node.id); focusSelectedNode(); });
+    const card = button('', `node${node.abstract ? ' abstract' : ''}${node.cycle ? ' cyclic' : ''}${node.buildModule ? ' build-module' : ''}`, () => { selectNode(node.id); focusSelectedNode(); });
     card.style.left = `${position.x}px`; card.style.top = `${position.y}px`; card.style.width = `${CARD.width}px`; card.style.height = `${CARD.height}px`; card.dataset.node = node.id;
     card.setAttribute('aria-label', `${titleFor(node)}，${node.moduleCount} 个源码模块${node.cycle ? '，含循环依赖' : ''}`);
     card.addEventListener('dblclick', () => enterNode(node));
     for (const event of ['pointerenter', 'focus']) card.addEventListener(event, () => { state.hovered = node.id; applyHighlight(); });
     for (const event of ['pointerleave', 'blur']) card.addEventListener(event, () => { if (state.hovered === node.id) { state.hovered = null; applyHighlight(); } });
-    const heading = element('div', 'node-heading'); heading.append(icon(node.leaf ? 'file' : 'folder', 'node-symbol'), element('span', 'node-name', titleFor(node)));
-    card.append(heading, element('p', 'node-description', descriptionFor(node) || (node.leaf ? '源码文件 · 点击查看依赖与说明' : `${node.moduleCount} 个源码模块 · 双击查看内部结构`)));
-    const bottom = element('div', 'node-bottom'); bottom.append(element('span', '', `${node.label} / ${node.moduleCount}`));
+    const heading = element('div', 'node-heading'); heading.append(icon(nodeIcon(node), 'node-symbol'), element('span', 'node-name', titleFor(node)));
+    if (node.buildModule) heading.append(element('span', 'build-tag', BUILD_TOOLS[node.buildModule.buildTool] || '模块'));
+    card.append(heading, element('p', 'node-description', descriptionFor(node) || (node.leaf ? '源码文件 · 点击查看依赖与说明' :
+      node.buildModule ? `${buildModuleKind(node.buildModule)} · ${node.moduleCount} 个源码模块 · 双击查看内部结构` : `${node.moduleCount} 个源码模块 · 双击查看内部结构`)));
+    const bottom = element('div', 'node-bottom'); bottom.append(element('span', '', node.buildModule ? `${buildModuleDirectory(node.buildModule)} / ${node.moduleCount}` : `${node.label} / ${node.moduleCount}`));
     bottom.append(complexityBadge(node.complexity));
     if (roleFor(node)) bottom.append(statusBadge(roleFor(node).status));
     bottom.append(icon(node.leaf ? 'external' : 'arrow', 'node-arrow')); card.append(bottom); world.append(card);
@@ -470,7 +517,9 @@ async function watchComplexity() {
   renderComplexityToggle();
   if (state.complexity.status === 'running') { complexityTimer = setTimeout(watchComplexity, 1500); return; }
   if (state.complexity.status !== 'ready' || !state.view) return;
-  const path = state.path.join('/'), view = await api('/api/view', { path });
+  // 复杂度进入节点数据，缓存的各层视图全部过期。
+  viewCache.clear();
+  const path = state.path.join('/'), view = await fetchView(path);
   if (path !== state.path.join('/')) return;
   const selected = state.selected?.id;
   state.view = view; state.selected = view.nodes.find(node => node.id === selected) || null;
@@ -510,7 +559,7 @@ function renderDiagramControls() {
     $('#' + id).classList.toggle('active', active); $('#' + id).setAttribute('aria-pressed', String(active));
   }
   $('#map-provenance').textContent = flow ? `数据流来自 ${state.document.path} · 状态由文档手动标记` : '连线来自源码分析 · 状态由文档手动标记';
-  $('#map-title').textContent = flow ? state.flows[state.flowIndex].title : state.path.length ? `${state.path.at(-1)} · 内部架构` : '全局架构地图';
+  $('#map-title').textContent = flow ? state.flows[state.flowIndex].title : codeMapTitle();
   $('#cycle-filter').disabled = flow;
   $('.map-footer > span').textContent = flow ? '拖动空白处移动画布 · 单击看详情 · 点击画布外恢复全局 · Ctrl + 滚轮缩放' : '单击看详情 · 双击进入 · 点击画布外恢复全局 · Ctrl + 滚轮缩放';
   $('#cycles-panel').hidden = flow || !state.cyclesOnly;
@@ -605,7 +654,7 @@ function selectFlowNode(node) { state.selectedFlow = node; renderDetail(); apply
 async function enterFlowModule(node) {
   const path = node.moduleKey.split('/'); const id = path.pop();
   try {
-    const view = await api('/api/view', { path: path.join('/') });
+    const view = await fetchView(path);
     const target = view.nodes.find(n => n.id === id);
     if (!target) { toast('此文档节点在当前代码结构中没有对应模块'); return; }
     if (target.leaf) showSource(target.sourceModule);
@@ -712,8 +761,12 @@ function applyHighlight() {
   const selected = state.selected?.id; const focus = selected || state.hovered; const query = $('#search').value.trim().toLowerCase();
   const connected = new Set([focus]);
   state.view.edges.filter(e => e.from === focus || e.to === focus).forEach(e => { connected.add(e.from); connected.add(e.to); });
+  // 悬停也会触发高亮，节点和连线按编号一次建表，避免大目录下逐个重查页面。
+  const cards = new Map($$('button.node', $('#map-world')).map(el => [el.dataset.node, el]));
+  const cyclic = new Set(state.view.nodes.filter(node => node.cycle).map(node => node.id));
+  const showEdges = $('#show-edges').checked, allEdges = $('#edge-scope').value === 'all';
   for (const node of state.view.nodes) {
-    const el = $$('button.node').find(el => el.dataset.node === node.id); if (!el) continue;
+    const el = cards.get(node.id); if (!el) continue;
     const matched = !query || `${node.label} ${titleFor(node)} ${node.fullName} ${node.members.join(' ')} ${descriptionFor(node)} ${roleFor(node)?.status || ''}`.toLowerCase().includes(query);
     el.classList.toggle('selected', node.id === selected); el.classList.toggle('matched', Boolean(query && matched));
     el.classList.toggle('dimmed', !matched || (focus && !connected.has(node.id)) || (state.cyclesOnly && !node.cycle));
@@ -722,10 +775,10 @@ function applyHighlight() {
   for (const edge of $$('.edge,.edge-label')) {
     const active = edge.dataset.from === focus || edge.dataset.to === focus;
     const incoming = edge.dataset.to === focus;
-    const cycle = state.cyclesOnly && state.view.nodes.some(node => node.id === edge.dataset.from && node.cycle) && state.view.nodes.some(node => node.id === edge.dataset.to && node.cycle);
+    const cycle = state.cyclesOnly && cyclic.has(edge.dataset.from) && cyclic.has(edge.dataset.to);
     edge.classList.toggle('active', Boolean(focus && active)); edge.classList.toggle('incoming', Boolean(focus && incoming));
     edge.classList.toggle('faded', Boolean(focus && !active));
-    edge.style.display = $('#show-edges').checked && ($('#edge-scope').value === 'all' || active || cycle) ? '' : 'none';
+    edge.style.display = showEdges && (allEdges || active || cycle) ? '' : 'none';
     if (edge.tagName.toLowerCase() === 'path') edge.setAttribute('marker-end', `url(#${focus && active ? incoming ? 'arrow-incoming' : 'arrow-active' : 'arrow'})`);
   }
   $('.map-footer > span').textContent = $('#edge-scope').value === 'focus' ? '指向预览 · 点击固定 · 拖动空白处移动画布 · 点击画布外恢复全局 · 绿色为依赖，橙色为被依赖' : '拖动空白处移动画布 · 点击画布外恢复全局 · 点击突出上下游 · Ctrl + 滚轮缩放';
@@ -781,8 +834,9 @@ function renderDetail() {
   if (!node) {
     renderEmptyDetail(panel); return;
   }
-  panel.replaceChildren(element('div', 'eyebrow', node.leaf ? '源码文件' : '模块详情'));
+  panel.replaceChildren(element('div', 'eyebrow', node.leaf ? '源码文件' : node.buildModule ? buildModuleKind(node.buildModule) : '模块详情'));
   panel.append(element('h3', '', titleFor(node)), element('div', 'detail-id', node.sourcePath || node.fullName));
+  if (node.buildModule) panel.append(element('div', 'build-module-info', `构建目录：${buildModuleDirectory(node.buildModule)} · 按目录中的 ${node.buildModule.buildTool === 'gradle' ? 'build.gradle' : node.buildModule.buildTool === 'maven' ? 'pom.xml' : '构建文件'} 识别`));
   const role = roleFor(node);
   if (role) panel.append(statusChoices(role));
   if (node.cycle) panel.append(element('span', 'cycle-badge', '包含循环依赖'));
@@ -945,14 +999,14 @@ async function showSource(module, line) {
 async function reanalyze() {
   const control = $('#reanalyze'); control.disabled = true; control.classList.add('busy'); control.replaceChildren(icon('refresh'), element('span', '', '分析中…'));
   try {
-    state.project = await api('/api/reanalyze', {}, 'POST'); updateProject();
+    state.project = await api('/api/reanalyze', {}, 'POST'); viewCache.clear(); updateProject();
     state.complexity = state.project.complexity; renderComplexityToggle();
-    state.rootView = await api('/api/view');
+    state.rootView = await fetchView([]);
     state.navigationView = null; state.navigationPath = [];
     const doc = state.project.documents.find(d => d.id === state.document?.id) || state.project.documents.find(d => d.scope === 'project');
     await loadDocument(doc?.id || '');
     let path = state.path;
-    if (path.length && !(await api('/api/view', { path: path.join('/') })).nodes.length) path = [];
+    if (path.length && !(await fetchView(path)).nodes.length) path = [];
     await navigate(path, state.mode); toast('架构与项目说明已更新'); watchComplexity();
   } catch (error) { toast(error.message); }
   finally { control.disabled = false; control.classList.remove('busy'); control.replaceChildren(icon('refresh'), element('span', '', '重新分析')); }

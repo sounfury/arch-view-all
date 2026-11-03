@@ -79,16 +79,23 @@
   (let [path (str (.relativize (.toPath root) (.toPath file)))]
     (if (empty? path) "." (str/replace path "\\" "/"))))
 
+(defn- build-tool
+  "按构建描述文件判断构建工具；同时存在时以 Gradle 为准（常见于迁移中的项目）。"
+  [dir]
+  (cond
+    (some #(.isFile (io/file dir %)) ["build.gradle" "build.gradle.kts"]) "gradle"
+    (.isFile (io/file dir "pom.xml")) "maven"))
+
 (defn- module-candidates [root language]
   (let [source-dirs (if (= :kotlin language) ["src/main/kotlin" "src/main/java"] ["src/main/java"])]
     (->> (entries root)
          (filter #(.isDirectory ^java.io.File %))
-         (filter #(some (fn [marker] (.isFile (io/file % marker)))
-                        ["pom.xml" "build.gradle" "build.gradle.kts"]))
          (keep (fn [dir]
-                 (let [paths (filter #(.isDirectory (io/file dir %)) source-dirs)]
+                 (let [tool (build-tool dir)
+                       paths (when tool (filter #(.isDirectory (io/file dir %)) source-dirs))]
                    (when (seq paths)
                      {:name (str/replace (.getName dir) "." "_")
+                      :build-tool tool
                       :directory (relative-path root dir)
                       :source-paths (mapv #(relative-path root (io/file dir %)) paths)}))))
          (sort-by :directory) vec)))

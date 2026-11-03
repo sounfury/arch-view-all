@@ -248,12 +248,18 @@
               state (web/create-state architecture root {})
               top (web/view-data state [])
               out (io/file root "architecture.edn")]
-          (should= [{:name "user-api" :directory "user-api" :source-paths ["user-api/src/main/java"]}
-                    {:name "user-app" :directory "user-app" :source-paths ["user-app/src/main/java"]}]
+          (should= [{:name "user-api" :build-tool "maven" :directory "user-api" :source-paths ["user-api/src/main/java"]}
+                    {:name "user-app" :build-tool "gradle" :directory "user-app" :source-paths ["user-app/src/main/java"]}]
                    (get-in architecture [:guidance :build-modules]))
           (should= ["user-api/src/main/java" "user-app/src/main/java"]
                    (get-in architecture [:guidance :source-paths]))
           (should= #{"user-api" "user-app"} (set (map :id (:nodes top))))
+          (should= [{:name "user-api" :directory "user-api" :buildTool "maven"}
+                    {:name "user-app" :directory "user-app" :buildTool "gradle"}]
+                   (map :buildModule (:nodes top)))
+          (should= ["user-api" "user-app"] (map :name (:buildModules (web/project-data state))))
+          ;; 进入模块后就是普通软件包，不再标注构建模块。
+          (should-not-contain :buildModule (first (:nodes (web/view-data state ["user-api"]))))
           (should= [{:from "user-app" :to "user-api" :type :abstract :count 1}] (:edges top))
           (should= ["user-api.com.foo.Port"] (:members (first (:nodes top))))
           (should= {:path ["user-app" "com" "foo"] :nodeId "App" :module "user-app.com.foo.App"}

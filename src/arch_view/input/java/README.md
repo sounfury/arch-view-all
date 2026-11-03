@@ -14,6 +14,7 @@
 仅在语言为 Java 或 Kotlin、没有通过 `--source-path` 或配置覆盖源码路径，且发现至少两个构建模块时启用分组。
 此时浏览层级为“根 → 构建模块 → 包 → 文件”，例如 `user-api.com.foo.Port`。
 单模块、没有构建模块或显式覆盖源码路径时，节点和原有扫描行为保持不变。
+网页会把根层的构建模块单独标出：立方体图标、Maven/Gradle 标签和模块目录；同时有 Gradle 与 Maven 构建文件时按 Gradle 标注。
 
 模块按目录发现：目录同时包含 `pom.xml`、`build.gradle`、`build.gradle.kts` 中任意一个文件以及主源码目录。
 Java 主源码目录为 `src/main/java`；Kotlin 收录 `src/main/kotlin` 和存在的 `src/main/java`。

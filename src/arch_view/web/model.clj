@@ -1,4 +1,4 @@
-;; 职责：把完整架构整理为网页数据，并把用户选择的子系统实现状态保存到架构文档。
+;; 职责：把完整架构整理为网页数据（含 Maven/Gradle 构建模块标注），并把用户选择的子系统实现状态保存到架构文档。
 ;; 核心入口：生成当前层数据（view-data）；生成项目概览（project-data）。
 
 (ns arch-view.web.model
@@ -8,11 +8,15 @@
             [clojure.java.io :as io]
             [clojure.string :as str]))
 
-(declare ^:private members-for ^:private source-info ^:private document-headings ^:private status-fields)
+(declare ^:private members-by-child ^:private members-for ^:private source-info ^:private node-data
+         ^:private build-module-data ^:private document-headings ^:private status-fields
+         ^:private canonical-sources)
 
 (defn create-state [architecture project-path opts]
   (let [root (documents/root-path project-path)]
     {:architecture architecture :root root :opts opts
+     ;; 规范路径每个文件只算一次，避免每次浏览都对全部源码发起文件系统调用。
+     :canonical-sources (canonical-sources architecture)
      :documents (documents/discover root architecture (:architecture-doc opts))}))
 
 (defn project-data [{:keys [architecture root documents can-reanalyze opts] :as state}]
@@ -21,6 +25,7 @@
    :language (get-in architecture [:guidance :language] :clojure)
    :namespaceRootDepth (get-in architecture [:guidance :namespace-root-depth] 1)
    :sourcePaths (get-in architecture [:guidance :source-paths])
+   :buildModules (mapv build-module-data (get-in architecture [:guidance :build-modules]))
    :moduleCount (count (get-in architecture [:graph :nodes]))
    :dependencyCount (count (get-in architecture [:graph :edges]))
    :canReanalyze (boolean can-reanalyze)
@@ -29,38 +34,22 @@
    :documents documents})
 
 (defn view-data [{:keys [architecture root documents] :as state} path]
-  (let [view (projection/view-architecture architecture path)
-        nodes (mapv (fn [id]
-                      (let [leaf? (true? (get-in view [:module->leaf? id]))
-                            members (members-for architecture path id leaf?)
-                            member-files (mapv #(get-in architecture [:graph :module->source-file %]) members)
-                            ;; 分组只有一个明确的源码文件时，直接沿用它的说明；仍保留分组与下钻语义。
-                            only-file (when (and (seq member-files) (every? some? member-files)
-                                                 (= 1 (count (set member-files))))
-                                        (first member-files))
-                            file (or (get-in view [:module->source-file id]) only-file)]
-                        (merge {:id id :label (get-in view [:module->display-label id])
-                                :fullName (get-in view [:module->full-name id])
-                                :leaf leaf? :abstract (= :abstract (get-in view [:module->kind id]))
-                                :cycle (boolean (get-in view [:module->cycle? id]))
-                                :layer (get-in view [:layout :module->layer id] 0)
-                                :moduleCount (count members) :members members
-                                :sourceModule (when leaf? (first members))}
-                               (when (and (not leaf?) only-file) {:descriptionFromOnlyFile true})
-                               (when-let [metrics (complexity/node-metrics
-                                                   (:complexity state)
-                                                   (map (fn [module file] [module (some-> file io/file .getCanonicalPath)])
-                                                        members member-files))]
-                                 {:complexity metrics})
-                               (source-info root file))))
-                    (sort (get-in view [:graph :nodes])))
-        sources (keep #(get-in architecture [:graph :module->source-file %]) (mapcat :members nodes))
+  (let [path (vec path)
+        view (projection/view-architecture architecture path)
+        canonical @(or (:canonical-sources state) (canonical-sources architecture))
+        context {:state state :view view :path path :canonical canonical
+                 :groups (members-by-child architecture path)
+                 ;; 构建模块固定是根层第一段，进入模块内部后就是普通软件包。
+                 :build-modules (when (empty? path)
+                                  (into {} (map (juxt :name build-module-data))
+                                        (get-in architecture [:guidance :build-modules])))}
+        nodes (mapv #(node-data context %) (sort (get-in view [:graph :nodes])))
+        sources (keep canonical (mapcat :members nodes))
         local-docs (filter (fn [{:keys [scope directory]}]
                             (and (= scope :package)
-                                 (some (fn [file]
-                                         (.startsWith (.toPath (.getCanonicalFile (io/file file)))
-                                                      (.toPath (io/file (.toFile ^java.nio.file.Path root) directory))))
-                                       sources))) documents)]
+                                 (let [dir (.toPath (io/file (.toFile ^java.nio.file.Path root) directory))]
+                                   (some #(.startsWith (.toPath (io/file ^String %)) dir) sources))))
+                          documents)]
     {:path path :nodes nodes
      :edges (vec (sort-by (juxt :from :to) (:classified-edges view)))
      :displayEdges (vec (sort-by (juxt :from :to) (:display-edges view)))
@@ -142,16 +131,54 @@
                (if match (conj headings {:title (str/trim (nth match 2)) :depth (count (second match))
                                         :start offset :body-start next-offset}) headings))))))
 
-(defn- members-for [architecture path node leaf?]
-  (binding [projection/*namespace-root-depth* (get-in architecture [:guidance :namespace-root-depth] 1)]
-    (let [prefix (conj path (projection/node-child-name node))]
-      (->> (get-in architecture [:graph :nodes])
-           (filter (fn [module]
-                     (let [parts (projection/namespace-segments module)]
-                       (and (projection/prefix? prefix parts)
-                            (if leaf? (= (count parts) (count prefix))
-                                (> (count parts) (count prefix)))))))
-           sort vec))))
+(defn- node-data [{:keys [state view path canonical groups build-modules]} id]
+  (let [{:keys [architecture root]} state
+        leaf? (true? (get-in view [:module->leaf? id]))
+        members (members-for groups path id leaf?)
+        member-files (mapv #(get-in architecture [:graph :module->source-file %]) members)
+        ;; 分组只有一个明确的源码文件时，直接沿用它的说明；仍保留分组与下钻语义。
+        only-file (when (and (seq member-files) (every? some? member-files)
+                             (= 1 (count (set member-files))))
+                    (first member-files))
+        file (or (get-in view [:module->source-file id]) only-file)
+        build-module (when-not leaf? (get build-modules id))]
+    (merge {:id id :label (get-in view [:module->display-label id])
+            :fullName (get-in view [:module->full-name id])
+            :leaf leaf? :abstract (= :abstract (get-in view [:module->kind id]))
+            :cycle (boolean (get-in view [:module->cycle? id]))
+            :layer (get-in view [:layout :module->layer id] 0)
+            :moduleCount (count members) :members members
+            :sourceModule (when leaf? (first members))}
+           (when build-module {:buildModule build-module})
+           (when (and (not leaf?) only-file) {:descriptionFromOnlyFile true})
+           (when-let [metrics (complexity/node-metrics (:complexity state)
+                                                       (map (fn [module] [module (get canonical module)]) members))]
+             {:complexity metrics})
+           (source-info root file))))
+
+(defn- build-module-data [{:keys [name directory build-tool]}]
+  {:name name :directory directory :buildTool build-tool})
+
+(defn- canonical-sources [architecture]
+  (delay (into {} (for [[module file] (get-in architecture [:graph :module->source-file])
+                        :when file]
+                    [module (.getCanonicalPath (io/file file))]))))
+
+(defn- members-by-child
+  "把当前层下的模块按直接子包分组并附带分段，避免每个节点都重扫全部模块。"
+  [architecture path]
+  (let [segments (:segments (projection/architecture-index architecture))
+        depth (count path)]
+    (->> segments
+         (filter (fn [[_ parts]] (and (> (count parts) depth) (projection/prefix? path parts))))
+         (group-by (fn [[_ parts]] (nth parts depth))))))
+
+(defn- members-for [groups path node leaf?]
+  (let [size (inc (count path))]
+    (->> (get groups (projection/node-child-name node))
+         (keep (fn [[module parts]]
+                 (when (if leaf? (= (count parts) size) (> (count parts) size)) module)))
+         sort vec)))
 
 (defn- source-info [root file]
   (when file
