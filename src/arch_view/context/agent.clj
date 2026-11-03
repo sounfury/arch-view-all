@@ -6,6 +6,7 @@
             [arch-view.context.pack :as pack]
             [arch-view.context.provider :as provider]
             [arch-view.context.sandbox :as sandbox]
+            [arch-view.context.secure-fs :as secure-fs]
             [arch-view.context.sessions :as sessions]
             [clojure.string :as str])
   (:import [java.io ByteArrayOutputStream InputStream]
@@ -44,12 +45,12 @@
 
 (defn- sandboxed-answer! [ws command markdown timeout]
   (let [isolation (sandbox/open! ws)]
-    (try
-      (let [{:keys [args env provider]} (provider/prepare ws (provider/parse-command command) (:directory isolation))
-            wrapped ((:wrap isolation) args)
-            answer (execute! ws wrapped (merge (:env isolation) env) markdown timeout)]
-        {:answer answer :provider provider :sandbox {:kind (:kind isolation) :readOnly true}})
-      (finally ((:cleanup isolation))))))
+    (secure-fs/with-cleanup (:cleanup isolation)
+      (fn []
+        (let [{:keys [args env provider]} (provider/prepare ws (provider/parse-command command) (:directory isolation))
+              wrapped ((:wrap isolation) args)
+              answer (execute! ws wrapped (merge (:env isolation) env) markdown timeout)]
+          {:answer answer :provider provider :sandbox {:kind (:kind isolation) :readOnly true}})))))
 
 (defn- stop-process! [^Process process]
   (with-open [children (.descendants (.toHandle process))]

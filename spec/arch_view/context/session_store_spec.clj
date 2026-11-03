@@ -2,7 +2,8 @@
 ;; 核心入口：session-store 的公开 API；所有文件均位于测试临时目录。
 
 (ns arch-view.context.session-store-spec
-  (:require [arch-view.context.session-store :as store]
+  (:require [arch-view.context.secure-fs :as sfs]
+            [arch-view.context.session-store :as store]
             [arch-view.web.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -269,6 +270,18 @@
         (let [error (error-data #(store/read-session ws local-id))]
           (should= 502 (:status error))
           (should-contain "读取原生 pi 会话失败" (:message error))))))
+
+  (it "无 SecureDirectoryStream 时仍能保存读取，并拒绝中间符号链接"
+    (binding [sfs/*force-path-ops* true]
+      (with-fixture
+        (fn [{:keys [ws metadata prepared root] :as fixture}]
+          (should= metadata (save! fixture))
+          (should= metadata (store/read-session ws local-id))
+          (let [outside (mkdir root "outside-state")
+                link (symlink! (.resolve root "linked-state") outside)
+                unsafe (assoc-in ws [:opts :agent-state-dir] (str (.resolve link "nested")))]
+            (should= 502 (:status (error-data #(save! (assoc fixture :ws unsafe)))))
+            (should= 502 (:status (error-data #(store/list-sessions unsafe)))))))))
 
   (it "拒绝 prepared 目录越出 scratch，以及 env 路径中的 .."
     (with-fixture

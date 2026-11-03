@@ -5,6 +5,7 @@
   (:require [arch-view.context.acp :as acp]
             [arch-view.context.provider :as provider]
             [arch-view.context.sandbox :as sandbox]
+            [arch-view.context.secure-fs :as secure-fs]
             [arch-view.context.session-store :as store])
   (:import [java.time Instant]
            [java.util UUID]
@@ -40,8 +41,7 @@
 (defn- release-entry! [manager id]
   (when-let [{:keys [connection isolation]} (get @(:sessions manager) id)]
     (swap! (:sessions manager) dissoc id)
-    (try (acp/close! connection)
-         (finally ((:cleanup isolation))))))
+    (secure-fs/with-cleanup (:cleanup isolation) #(acp/close! connection))))
 
 (defn- reap! [manager]
   (locking (:lock manager)
@@ -98,8 +98,9 @@
          :data (atom (or saved (metadata target upstream id))) :callback callback
          :busy (AtomicBoolean. false) :touched (atom (System/currentTimeMillis))})
       (catch Exception ex
-        (try (when-let [conn @connection] (acp/close! conn))
-             (finally ((:cleanup isolation))))
+        (when-let [conn @connection]
+          (try (acp/close! conn) (catch Exception close (.addSuppressed ex close))))
+        (try ((:cleanup isolation)) (catch Exception clean (.addSuppressed ex clean)))
         (throw ex)))))
 
 (defn- acquire-entry! [manager ws target session-id]

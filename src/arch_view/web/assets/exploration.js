@@ -163,7 +163,7 @@ export function createExploration(host) {
       () => openCode(step.module, anchor.path, line)), anchorBadge(anchor.status));
     item.append(where);
     if (step.module) item.append(element('div', 'trace-module', step.module));
-    if (raw.explanation) item.append(richText(raw.explanation, 'trace-explanation'));
+    if (raw.explanation) item.append(answerBody(raw.explanation, 'trace-explanation'));
     return item;
   }
 
@@ -215,7 +215,7 @@ export function createExploration(host) {
     const status = note.status || note.check?.status || 'unanchored';
     const item = element('details', `note-item ${status}`);
     const summary = element('summary'); summary.append(element('span', '', note.title), anchorBadge(status));
-    item.append(summary, richText(note.body || ''));
+    item.append(summary, answerBody(note.body || ''));
     const anchors = note.anchors || note.check?.anchors || [];
     if (anchors.length) {
       const list = element('div', 'note-anchors');
@@ -226,7 +226,6 @@ export function createExploration(host) {
       item.append(list);
     }
     item.append(element('div', 'detail-provenance', `${note.author === 'human' ? '人工' : 'AI'} · ${formatDate(note.createdAt)} · ${note.id}${note.targetMissing ? ' · 目标模块已不存在' : ''}`));
-    linkifyCode(item);
     return item;
   }
 
@@ -349,7 +348,7 @@ export function createExploration(host) {
     for (const turn of chat.turns) {
       const item = element('section', 'ask-turn');
       item.append(element('p', 'ask-question', turn.question));
-      const answer = richText(turn.answer, 'ask-answer'); linkifyCode(answer); item.append(answer);
+      item.append(answerBody(turn.answer, 'ask-answer'));
       const actions = element('div', 'ai-actions');
       actions.append(button('保存为解释', 'button small', event => saveNote(event.currentTarget, target, label, turn.question, turn.answer, turn.anchors || [])),
         button('复制回答', 'button small', () => copyText(turn.answer).then(() => toast('回答已复制'))));
@@ -357,7 +356,7 @@ export function createExploration(host) {
     }
     if (chat.pending) {
       output.append(element('p', 'ask-question', chat.pending.question));
-      if (chat.pending.text) output.append(element('div', 'ask-stream-text', chat.pending.text));
+      if (chat.pending.text) output.append(answerBody(chat.pending.text, 'ask-answer ask-streaming'));
       output.append(element('p', 'ask-waiting', chat.pending.status || '本机 AI 正在只读沙箱中阅读代码并作答…'));
     }
     if (chat.error) output.append(element('p', 'ask-error', chat.error));
@@ -367,9 +366,18 @@ export function createExploration(host) {
   function streamUpdate(chat, params) {
     const update = params.update || params;
     if (!chat.pending) return;
-    if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') chat.pending.text += update.content.text || '';
-    if (['tool_call', 'tool_call_update'].includes(update.sessionUpdate)) chat.pending.status = update.title || '正在读取代码…';
-    chat.render?.();
+    let dirty = false;
+    if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
+      chat.pending.text += update.content.text || ''; dirty = true;
+    }
+    if (['tool_call', 'tool_call_update'].includes(update.sessionUpdate)) {
+      chat.pending.status = update.title || '正在读取代码…'; dirty = true;
+    }
+    if (!dirty) return;
+    const now = performance.now();
+    if (update.sessionUpdate !== 'agent_message_chunk' || now - (chat.pending.renderedAt || 0) > 120) {
+      chat.pending.renderedAt = now; chat.render?.();
+    }
   }
 
   async function ask(target, question, chat, configs) {
@@ -437,7 +445,20 @@ export function createExploration(host) {
 
   // ===== 源码与工具 =====
 
+  function answerBody(markdown, className = '') {
+    const node = richText(markdown, `markdown ${className}`.trim(), { breaks: false, keepLocalLinks: true });
+    linkifyCode(node);
+    return node;
+  }
+
+  function parseCodeRef(text) {
+    const match = String(text || '').trim().match(/^([\w@./-]+\.[A-Za-z][\w.]*)(?::(\d+)(?:-\d+)?)?$/);
+    if (!match || match[1].includes('://')) return null;
+    return match[1].includes('/') || match[2] ? { path: match[1], line: match[2] ? Number(match[2]) : undefined } : null;
+  }
+
   async function openCode(module, path, line) {
+    if (document.querySelector('.ask-output')?.isConnected) { await showSourcePreview(module, path, line); return; }
     if (module) { showSource(module, line); return; }
     if (!path) { toast('没有可打开的源码位置'); return; }
     try {
@@ -450,12 +471,47 @@ export function createExploration(host) {
     } catch (error) { toast(error.message); }
   }
 
-  /** 把回答里的 `路径:行号` 变成可点击的源码链接。 */
+  async function showSourcePreview(module, path, line) {
+    const host = $('#drawer-content');
+    if (!host) { if (module) showSource(module, line); return; }
+    let preview = host.querySelector('.ask-source-preview');
+    if (!preview) {
+      preview = element('section', 'ask-source-preview');
+      const head = element('div', 'ask-source-head');
+      head.append(element('strong', '', path || module || '源码'), button('关闭预览', 'button small', () => preview.remove()));
+      preview.append(head, element('div', 'ask-source-body'));
+      host.append(preview);
+    }
+    preview.querySelector('strong').textContent = path || module || '源码';
+    const body = preview.querySelector('.ask-source-body');
+    body.replaceChildren(element('p', 'ask-waiting', '正在打开源码…'));
+    preview.scrollIntoView({ block: 'nearest' });
+    try {
+      const file = module ? await api('/api/source', { module }) : await api('/api/file', { path });
+      const list = element('ol', 'source-list');
+      file.content.split('\n').forEach(text => list.append(element('li', '', text || ' ')));
+      body.replaceChildren(list);
+      preview.querySelector('strong').textContent = file.path;
+      const target = line && list.children[line - 1];
+      if (target) { target.classList.add('source-target'); target.scrollIntoView({ block: 'center' }); }
+    } catch (error) { toast(error.message); preview.remove(); }
+  }
+
+  /** 把回答里的路径、`路径:行号` 和项目内链接变成可点击的源码跳转。 */
   function linkifyCode(root) {
+    for (const link of root.querySelectorAll('a[href]')) {
+      const href = link.getAttribute('href') || '';
+      if (/^https?:/i.test(href) || href.startsWith('#')) continue;
+      const ref = parseCodeRef(href) || parseCodeRef(decodeURIComponent(href));
+      link.removeAttribute('href');
+      if (!ref) continue;
+      link.classList.add('code-link');
+      link.addEventListener('click', event => { event.preventDefault(); openCode(null, ref.path, ref.line); });
+    }
     for (const code of root.querySelectorAll('code')) {
-      const match = code.textContent.match(/^([\w@./-]+\.[A-Za-z0-9]+):(\d+)(?:-\d+)?$/);
-      if (!match || code.closest('pre')) continue;
-      const link = button(code.textContent, 'text-button code-link', () => openCode(null, match[1], Number(match[2])));
+      const ref = parseCodeRef(code.textContent);
+      if (!ref || code.closest('pre')) continue;
+      const link = button(code.textContent, 'text-button code-link', () => openCode(null, ref.path, ref.line));
       code.replaceWith(link);
     }
   }

@@ -91,14 +91,15 @@ function plain(markdown) {
   return container.textContent.replace(/\s+/g, ' ').trim();
 }
 // 文件说明由服务端整理为 Markdown（Javadoc 的 <p>、{@code}、{@link} 已转换），清洗后以 DOM 片段插入。
-function richText(markdown, className = '') {
+function richText(markdown, className = '', options = {}) {
   const container = element('div', `rich-text ${className}`.trim());
-  container.append(DOMPurify.sanitize(marked.parse(markdown || '', { breaks: true }), {
+  container.append(DOMPurify.sanitize(marked.parse(markdown || '', { gfm: true, breaks: options.breaks !== false }), {
     USE_PROFILES: { html: true }, FORBID_TAGS: ['style', 'form', 'input', 'button', 'img'], FORBID_ATTR: ['style', 'id', 'name'], RETURN_DOM_FRAGMENT: true
   }));
   for (const link of $$('a', container)) {
-    if (/^https?:/i.test(link.getAttribute('href') || '')) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
-    else link.removeAttribute('href');
+    const href = link.getAttribute('href') || '';
+    if (/^https?:/i.test(href)) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+    else if (!options.keepLocalLinks) link.removeAttribute('href');
   }
   return container;
 }

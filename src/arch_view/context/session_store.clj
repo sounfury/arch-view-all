@@ -2,23 +2,21 @@
 ;; 核心入口：save!、restore!、read-session、list-sessions；只访问 prepared 环境指定的会话文件。
 
 (ns arch-view.context.session-store
-  (:require [arch-view.web.json :as json]
+  (:require [arch-view.context.secure-fs :as sfs]
+            [arch-view.web.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.walk :as walk])
   (:import [java.io ByteArrayInputStream ByteArrayOutputStream]
            [java.nio ByteBuffer]
            [java.nio.channels Channels FileChannel]
-           [java.nio.file Files Path SecureDirectoryStream LinkOption
-            StandardOpenOption NoSuchFileException FileAlreadyExistsException]
-           [java.nio.file.attribute BasicFileAttributeView FileAttribute
-            PosixFileAttributeView PosixFilePermissions]
+           [java.nio.file Path LinkOption StandardOpenOption NoSuchFileException]
+           [java.nio.file.attribute FileAttribute PosixFilePermissions]
            [java.security MessageDigest]
            [java.time Instant]
            [java.util UUID]
            [java.util.zip ZipEntry ZipInputStream ZipOutputStream]))
 
-(def ^:private nofollow (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
 (def ^:private jsonl-limit (* 32 1024 1024))
 (def ^:private metadata-limit (* 2 1024 1024))
 (def ^:private snapshot-limit (+ jsonl-limit metadata-limit (* 64 1024)))
@@ -54,47 +52,14 @@
     (when (some #{".."} (map str path)) (fail! "会话路径禁止包含 .."))
     (.normalize path)))
 
-(defn- secure-stream [stream]
-  (when-not (instance? SecureDirectoryStream stream)
-    (.close ^java.io.Closeable stream)
-    (fail! "文件系统不支持安全目录句柄"))
-  stream)
-
-(defn- mkdir! [^Path path]
-  (try
-    (Files/createDirectory path
-      (into-array FileAttribute [(PosixFilePermissions/asFileAttribute directory-permissions)]))
-    (catch FileAlreadyExistsException _ nil)))
-
-(defn- descend [^SecureDirectoryStream parent ^Path full ^Path name create?]
-  (try (.newDirectoryStream parent name nofollow)
-       (catch NoSuchFileException ex
-         (when-not create? (throw ex))
-         (mkdir! full)
-         (.newDirectoryStream parent name nofollow))))
-
-(defn- walk-directory [^SecureDirectoryStream stream ^Path full parts create? f]
-  (if-let [name (first parts)]
-    (let [child (.resolve full ^Path name)]
-      (with-open [next-stream (descend stream child name create?)]
-        (walk-directory next-stream child (next parts) create? f)))
-    (f stream)))
-
-(defn- with-directory [^Path path create? f]
-  ;; 从文件系统根逐段以 NOFOLLOW_LINKS 打开；后续读写、替换都使用目录句柄。
-  (with-open [root (secure-stream (Files/newDirectoryStream (.getRoot path)))]
-    (walk-directory root (.getRoot path) (seq path) create? f)))
-
 (defn- private-directory! [^Path path]
-  (with-directory path true
-    (fn [^SecureDirectoryStream directory]
-      (.setPermissions ^PosixFileAttributeView
-        (.getFileAttributeView directory PosixFileAttributeView) directory-permissions)))
+  (sfs/with-directory path true
+    (fn [directory] (sfs/set-permissions directory directory-permissions)))
   path)
 
 (defn- project-directory [ws]
   (let [root (absolute-path (:root ws))
-        _ (with-directory root false (constantly nil))
+        _ (sfs/with-directory root false (constantly nil))
         digest (.digest (MessageDigest/getInstance "SHA-256") (.getBytes (str root) "UTF-8"))
         hash (apply str (map #(format "%02x" (bit-and 255 %)) digest))
         base (absolute-path (get-in ws [:opts :agent-state-dir]
@@ -115,12 +80,8 @@
     (doseq [^Path path [home sessions]]
       (when-not (and (.startsWith path scratch) (not= path scratch))
         (fail! "HOME 和 PI_CODING_AGENT_SESSION_DIR 必须位于独立 scratch 内")))
-    (with-directory scratch false (constantly nil))
+    (sfs/with-directory scratch false (constantly nil))
     {:home home :sessions sessions :map (.resolve home ".pi/pi-acp/session-map.json")}))
-
-(defn- attributes [^SecureDirectoryStream directory ^Path name]
-  (.readAttributes ^BasicFileAttributeView
-    (.getFileAttributeView directory name BasicFileAttributeView nofollow)))
 
 (defn- bounded-read [input limit]
   (let [out (ByteArrayOutputStream.) buffer (byte-array 8192)]
@@ -133,12 +94,12 @@
     (.toByteArray out)))
 
 (defn- read-file [^Path path limit]
-  (with-directory (.getParent path) false
-    (fn [^SecureDirectoryStream directory]
-      (let [name (.getFileName path) attrs (attributes directory name)]
+  (sfs/with-directory (.getParent path) false
+    (fn [directory]
+      (let [name (.getFileName path) attrs (sfs/entry-attrs directory name)]
         (when-not (.isRegularFile attrs) (fail! "会话文件必须是普通文件，禁止符号链接"))
         (when (> (.size attrs) limit) (fail! "会话文件超过大小限制"))
-        (with-open [channel (.newByteChannel directory name
+        (with-open [channel (sfs/byte-channel directory name
                               #{StandardOpenOption/READ LinkOption/NOFOLLOW_LINKS}
                               (make-array FileAttribute 0))
                     input (Channels/newInputStream channel)]
@@ -179,7 +140,7 @@
     (when-not (= 1 (get db "version")) (fail! "不支持的 pi-acp session-map 版本"))
     (when-not (and (.startsWith file sessions) (not= file sessions))
       (fail! "adapter 会话文件必须位于私有 PI_CODING_AGENT_SESSION_DIR 内"))
-    (with-directory sessions false (constantly nil))
+    (sfs/with-directory sessions false (constantly nil))
     {:upstreamSessionId (uuid! upstream-id)
      :native (native-header! (read-file file jsonl-limit) upstream-id)}))
 
@@ -197,9 +158,9 @@
 (defn- file-name [name]
   (.toPath (io/file name)))
 
-(defn- check-destination! [^SecureDirectoryStream directory ^Path name]
+(defn- check-destination! [directory ^Path name]
   (try
-    (when-not (.isRegularFile (attributes directory name))
+    (when-not (.isRegularFile (sfs/entry-attrs directory name))
       (fail! "目标会话文件必须是普通文件，禁止符号链接"))
     (catch NoSuchFileException _ nil)))
 
@@ -210,20 +171,19 @@
 
 (defn- atomic-write! [^Path path bytes]
   (private-directory! (.getParent path))
-  (with-directory (.getParent path) false
-    (fn [^SecureDirectoryStream directory]
+  (sfs/with-directory (.getParent path) false
+    (fn [directory]
       (let [destination (.getFileName path)
             temporary (file-name (str "." (UUID/randomUUID) ".tmp"))]
         (check-destination! directory destination)
         (try
-          (with-open [channel (.newByteChannel directory temporary
+          (with-open [channel (sfs/byte-channel directory temporary
                                 #{StandardOpenOption/WRITE StandardOpenOption/CREATE_NEW LinkOption/NOFOLLOW_LINKS}
                                 (into-array FileAttribute [(PosixFilePermissions/asFileAttribute file-permissions)]))]
             (write-channel! channel bytes))
-          ;; SecureDirectoryStream.move 为原子移动；不提供非原子降级。
-          (.move directory temporary directory destination)
+          (sfs/move-to directory temporary directory destination)
           (finally
-            (try (.deleteFile directory temporary) (catch NoSuchFileException _ nil))))))))
+            (try (sfs/delete-file directory temporary) (catch NoSuchFileException _ nil))))))))
 
 (defn- snapshot-entries [bytes]
   (with-open [zip (ZipInputStream. (ByteArrayInputStream. bytes))]
@@ -288,10 +248,10 @@
 
 (defn- project-session-ids [^Path project]
   (try
-    (with-directory project false
-      (fn [^SecureDirectoryStream directory]
-        (->> (iterator-seq (.iterator directory))
-             (map #(str (.getFileName ^Path %)))
+    (sfs/with-directory project false
+      (fn [directory]
+        (->> (sfs/child-names directory)
+             (map str)
              (filter valid-uuid?) vec)))
     (catch NoSuchFileException _ [])))
 

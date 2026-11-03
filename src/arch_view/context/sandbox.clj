@@ -2,12 +2,13 @@
 ;; 核心入口：open!；隔离不可用时拒绝执行，cleanup 不跟随符号链接。
 
 (ns arch-view.context.sandbox
-  (:require [clojure.java.io :as io]
+  (:require [arch-view.context.secure-fs :as secure-fs]
+            [clojure.java.io :as io]
             [clojure.string :as str])
-  (:import [java.nio.file Files Path SecureDirectoryStream LinkOption NoSuchFileException]
-           [java.nio.file.attribute BasicFileAttributeView FileAttribute PosixFilePermissions]))
+  (:import [java.nio.file Files Path LinkOption]
+           [java.nio.file.attribute FileAttribute PosixFilePermissions]))
 
-(declare ^:private platform ^:private temporary-directory ^:private cleanup! ^:private delete-entry!
+(declare ^:private platform ^:private temporary-directory ^:private cleanup!
          ^:private linux-wrapper ^:private macos-wrapper ^:private profile-string)
 
 (defn open!
@@ -28,7 +29,8 @@
            :wrap wrap :cleanup #(cleanup! directory)
            :kind (if (= :linux system) "linux-landlock" "macos-sandbox")})
         (catch Exception ex
-          (cleanup! directory)
+          (try (cleanup! directory)
+               (catch Exception clean (.addSuppressed ex clean)))
           (throw (ex-info (str "只读沙箱不可用：" (.getMessage ex)) {:status 503} ex)))))))
 
 ;; ===== 私有方法 =====
@@ -51,25 +53,9 @@
       (throw (ex-info (str "只读沙箱不可用：无法创建独占临时目录：" (.getMessage ex))
                       {:status 503} ex)))))
 
-(defn- delete-entry! [^SecureDirectoryStream parent ^Path name]
-  (try
-    (let [options (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])
-          view (.getFileAttributeView parent name BasicFileAttributeView options)]
-      (if (.isDirectory (.readAttributes ^BasicFileAttributeView view))
-        (do
-          (with-open [children (.newDirectoryStream parent name options)]
-            (doseq [^Path child children]
-              (delete-entry! children (.getFileName child))))
-          (.deleteDirectory parent name))
-        (.deleteFile parent name)))
-    (catch NoSuchFileException _ nil)))
-
 (defn- cleanup! [^Path directory]
-  ;; 目录句柄 + NOFOLLOW_LINKS，避免检查后被替换的链接把清理带到宿主目录。
-  (with-open [parent (Files/newDirectoryStream (.getParent directory))]
-    (when-not (instance? SecureDirectoryStream parent)
-      (throw (ex-info "无法安全清理临时目录：文件系统不支持安全目录句柄" {:status 503})))
-    (delete-entry! parent (.getFileName directory))))
+  ;; 有 SecureDirectoryStream 时用目录句柄；否则 NOFOLLOW 路径删除，符号链接只删链接。
+  (secure-fs/delete-tree! directory))
 
 (defn- linux-wrapper [ws ^Path directory]
   (let [resource (io/resource "arch_view/context/readonly_sandbox.py")

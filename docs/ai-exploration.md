@@ -4,6 +4,8 @@
 
 定位：**静态分析给可核对的事实，AI 负责解释，解释回到图上并被校验。** 四项功能：
 
+网页交互的下一阶段（常驻助手、`@` 附件、引用跳转、临时高亮链路）见 [架构图上的随身 AI 助手 PRD](ai-companion-prd.md)。本文仍是数据、命令与接口契约。
+
 | 编号 | 功能 | 命名空间 | 命令 | 网页接口 |
 | :--- | :--- | :--- | :--- | :--- |
 | P0 | 精确查询、改动影响 | `arch-view.query.*` | `arch-view query …`、`arch-view impact` | — |
@@ -114,7 +116,7 @@
 
 pi 仅在本次私有配置内对 `.lock` 目录虚拟化时间戳，以兼容 proper-lockfile 的同步加锁与续租，覆盖 callback、sync、promise 和 ESM 接口；宿主的元数据 syscall 禁止规则保持不变。认证副本与兼容脚本均由调用结束后的清理删除。
 
-`context/sandbox.clj` 为每次调用生成独占临时目录并包装命令。Linux helper 使用 Python 3、Landlock ABI ≥3 和系统 libseccomp：除临时目录及 `/dev/null` 外，禁止宿主文件写入；通过 seccomp 补足 Landlock 不覆盖的元数据修改、跨进程写入与 io_uring。限制会由子进程继承；标准输入输出使用管道，不能继承已打开的宿主可写文件。macOS 使用 `sandbox-exec` 禁止宿主 `file-write*`；其它系统拒绝执行。隔离不可用时没有无保护回退。文件读取和模型联网保留。
+`context/sandbox.clj` 为每次调用生成独占临时目录并包装命令。Linux helper 使用 Python 3、Landlock ABI ≥3 和系统 libseccomp：除临时目录及 `/dev/null` 外，禁止宿主文件写入；通过 seccomp 补足 Landlock 不覆盖的元数据修改、跨进程写入与 io_uring。限制会由子进程继承；标准输入输出使用管道，不能继承已打开的宿主可写文件。macOS 使用 `sandbox-exec` 禁止宿主 `file-write*`；其它系统拒绝执行。隔离不可用时没有无保护回退。文件读取和模型联网保留。临时目录清理与 ACP 会话快照走 `secure-fs`：有 `SecureDirectoryStream` 时用目录句柄；macOS 等 JDK 不提供该接口时改为对每一段路径 `lstat(NOFOLLOW)`，符号链接只删链接本身、不进入目标。清理失败不会覆盖先前的启动或提问异常。
 
 ## P1 链路：`arch-view trace`
 

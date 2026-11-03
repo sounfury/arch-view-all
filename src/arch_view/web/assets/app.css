@@ -320,6 +320,16 @@ button.node.cyclic .node-symbol { color:var(--orange); }
 .rich-text > :last-child { margin-bottom:0; }
 .rich-text p { margin:0 0 .7em; }
 .rich-text ul,.rich-text ol { margin:0 0 .7em; padding-left:1.4em; }
+.rich-text h1,.rich-text h2,.rich-text h3,.rich-text h4 { color:var(--ink); font-weight:650; line-height:1.35; }
+.rich-text h1 { font-size:20px; margin:0 0 .6em; }
+.rich-text h2 { font-size:16px; margin:1.1em 0 .5em; padding-bottom:6px; border-bottom:1px solid var(--line); }
+.rich-text h3 { font-size:14px; margin:1em 0 .4em; }
+.rich-text h4 { font-size:13px; margin:.8em 0 .35em; }
+.rich-text hr { border:0; border-top:1px solid var(--line); margin:14px 0; }
+.rich-text blockquote { border-left:3px solid #b6d19d; margin:0 0 .8em; padding:6px 14px; background:#f7faf1; color:#5d734c; }
+.rich-text table { display:block; border-collapse:collapse; overflow:auto; width:100%; margin:0 0 .8em; font-size:12px; }
+.rich-text td,.rich-text th { border:1px solid #e0ead6; padding:7px 10px; }
+.rich-text th { background:#f1f6e9; text-align:left; }
 .rich-text code { font:11px var(--mono); background:#eef3e9; color:#36553f; padding:1px 5px; border-radius:4px; }
 .rich-text pre { margin:0 0 .7em; padding:10px 12px; background:#f3f6ef; border-radius:6px; overflow:auto; white-space:pre; }
 .rich-text pre code { background:none; padding:0; }
@@ -501,7 +511,12 @@ button.node.trace-current { border-color:#3a7950; box-shadow:0 0 0 3px #3a795026
 .ask-question { margin:0 0 8px; font-size:13px; font-weight:600; }
 .ask-waiting { color:var(--muted); }
 .ask-error { color:#b4472f; }
-.ask-answer,.ask-stream-text { font-size:13px; line-height:1.9; }
-.ask-stream-text { white-space:pre-wrap; }
+.ask-answer { font-size:13px; line-height:1.85; color:var(--ink); }
+.ask-answer.markdown p,.ask-answer.markdown li { color:var(--ink); }
+.ask-answer.markdown a.code-link,.code-link { color:#2f6a3a; cursor:pointer; }
+.ask-streaming { opacity:.94; }
+.ask-source-preview { margin-top:18px; border:1px solid var(--line); border-radius:8px; background:#fbfcf8; overflow:hidden; }
+.ask-source-head { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); font:11px var(--mono); color:#6f8759; }
+.ask-source-body { max-height:42vh; overflow:auto; padding:8px 12px 12px; }
 .agent-hint { margin-top:12px; padding:12px 14px; border:1px solid #f1dec0; border-radius:7px; background:#fff9ed; color:#8e6a3c; font-size:12px; }
 .agent-hint p { margin:0 0 10px; }

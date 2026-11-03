@@ -151,7 +151,7 @@ flowchart TD
     - 读取文档中的子系统职责、人工实现状态和数据流；用三项单选框维护“已完成、未完成、进行中”，选择后保存到文档，不推断状态。未在文档里提到的源码列在图上方红框中，暂不画进图中。
   - **复杂度接入 (`complexity.clj`)**：自动在 PATH 中发现 crap 命令，后台运行 `crap complexity` 并按源码文件汇总圈复杂度；地图先行显示，结果出来后在卡片和详情中补上，工具栏的眼睛按钮可开关显示。只跑复杂度、不运行测试，也不在项目中写报告文件；未安装 crap 时不显示相关界面。
   - **纯原生前端 (`assets/`)**：无任何臃肿前端打包构建工具，采用标准 ES Modules、原生 CSS Variables 与 SVG 连接线渲染，轻量流畅。
-  - **AI 辅助探索 (`assets/exploration.js`)**：模块详情展示已有解释与锚点状态；复制上下文包，或调用本机配置的 AI 命令并保存回答。侧栏调用链路在全部步骤模块的公共上层展示，图中标序号、叠加逐跳关系，点步骤聚焦，点锚点打开源码。
+  - **AI 辅助探索 (`assets/exploration.js`)**：模块详情展示已有解释与锚点状态；复制上下文包，或调用本机配置的 AI 命令并保存回答。侧栏调用链路在全部步骤模块的公共上层展示，图中标序号、叠加逐跳关系，点步骤聚焦，点锚点打开源码。下一阶段产品方向见 [随身 AI 助手 PRD](docs/ai-companion-prd.md)。
   - **启动入口**：`arch-view serve .`；保留 `clj -M:web` 原入口，可与桌面端同时运行。
 
 [探索 Web 模块](#module=web)
@@ -172,7 +172,7 @@ flowchart TD
 - **实现状态**：已完成。
 - **职责**：按需打包目标的架构文档、文件说明、依赖、复杂度、已有解释/链路和有行号的源码，提供 Markdown 或 JSON。网页提问使用全局配置的本机 AI：`pi-acp` 走 ACP 多轮会话（流式、取消、恢复），`pi`/`command` 仍从标准输入一次性传入。
 - **pi / pi-acp 适配 (`provider.clj`)**：支持默认命令、模型参数、私有配置副本与只读工具白名单，关闭扩展、MCP、项目配置及启动更新，不修改原有 pi 配置。`pi-acp` 通过私有启动脚本强制底层 pi 进入只读 RPC，会话快照保存在本机状态目录。
-- **强制文件隔离 (`sandbox.clj` / `readonly_sandbox.py`)**：每次调用建立独占临时目录；Linux 使用 Landlock + seccomp，macOS 使用 `sandbox-exec`，禁止对宿主的文件内容和元数据写入。沙箱不可用时拒绝执行，没有无隔离回退；进程结束后清理临时配置。
+- **强制文件隔离 (`sandbox.clj` / `readonly_sandbox.py` / `secure_fs.clj`)**：每次调用建立独占临时目录；Linux 使用 Landlock + seccomp，macOS 使用 `sandbox-exec`，禁止对宿主的文件内容和元数据写入。沙箱不可用时拒绝执行，没有无隔离回退。清理与会话快照优先用 `SecureDirectoryStream`；JDK 不提供时用 NOFOLLOW 路径操作，不跟随符号链接。
 
 [探索上下文包](#module=context)
 
