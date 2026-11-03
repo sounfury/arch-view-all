@@ -314,6 +314,17 @@ button.node.cyclic .node-symbol { color:var(--orange); }
 .source-list li { counter-increment:line; display:flex; }
 .source-list li:before { content:counter(line); display:inline-block; min-width:45px; text-align:right; padding-right:18px; margin-right:14px; border-right:1px solid var(--line); color:#b3c4a1; user-select:none; }
 .source-description { font-size:12px; white-space:pre-wrap; background:#f0f7e8; padding:17px; margin-bottom:20px; border-left:2px solid #b2cf99; }
+/* 文件头说明按 Markdown 渲染：Javadoc 段落、行内代码、列表与代码块。 */
+.rich-text { white-space:normal; line-height:1.75; overflow-wrap:anywhere; }
+.rich-text > :first-child { margin-top:0; }
+.rich-text > :last-child { margin-bottom:0; }
+.rich-text p { margin:0 0 .7em; }
+.rich-text ul,.rich-text ol { margin:0 0 .7em; padding-left:1.4em; }
+.rich-text code { font:11px var(--mono); background:#eef3e9; color:#36553f; padding:1px 5px; border-radius:4px; }
+.rich-text pre { margin:0 0 .7em; padding:10px 12px; background:#f3f6ef; border-radius:6px; overflow:auto; white-space:pre; }
+.rich-text pre code { background:none; padding:0; }
+.detail-description .rich-text { color:#738e60; }
+.source-description.rich-text { white-space:normal; }
 .exploring main { padding-top:24px; }
 .exploring .hero,.exploring .design-notes { display:none; }
 .exploring .map-viewport { height:calc(100vh - 350px); min-height:430px; }

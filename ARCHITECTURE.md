@@ -146,7 +146,7 @@ flowchart TD
   - **本地 HTTP 核心 (`server.clj`)**：基于轻量级 JVM `HttpServer`，仅监听 `127.0.0.1` 本机同源，零外部依赖，极速启动。
   - **数据适配与文档提取 (`model.clj` / `documents.clj`)**：
     - 读取项目根目录与包目录的 `ARCHITECTURE.md`，自动关联并生成交互式说明卡片。
-    - 静态解析源码文件头注释（File Header Doc），无需 AI 即可提供清晰的模块职责定位。
+    - 静态解析源码文件头注释（File Header Doc），无需 AI 即可提供清晰的模块职责定位；Java/Kotlin 合并版权头与类说明，Javadoc（`<p>`、`{@code}`、`{@link}` 等）转为 Markdown 后在详情与源码面板渲染（`documents.clj`、`javadoc.clj`）。
     - 提供模块快速定位（Locate）与一键重新分析（Reanalyze）接口。
     - 读取文档中的子系统职责、人工实现状态和数据流；用三项单选框维护“已完成、未完成、进行中”，选择后保存到文档，不推断状态。未在文档里提到的源码列在图上方红框中，暂不画进图中。
   - **复杂度接入 (`complexity.clj`)**：自动在 PATH 中发现 crap 命令，后台运行 `crap complexity` 并按源码文件汇总圈复杂度；地图先行显示，结果出来后在卡片和详情中补上，工具栏的眼睛按钮可开关显示。只跑复杂度、不运行测试，也不在项目中写报告文件；未安装 crap 时不显示相关界面。

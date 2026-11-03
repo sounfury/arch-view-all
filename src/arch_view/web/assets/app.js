@@ -89,6 +89,23 @@ function plain(markdown) {
   container.innerHTML = DOMPurify.sanitize(marked.parse(markdown || ''), { USE_PROFILES: { html: true } });
   return container.textContent.replace(/\s+/g, ' ').trim();
 }
+// 文件说明由服务端整理为 Markdown（Javadoc 的 <p>、{@code}、{@link} 已转换），清洗后以 DOM 片段插入。
+function richText(markdown, className = '') {
+  const container = element('div', `rich-text ${className}`.trim());
+  container.append(DOMPurify.sanitize(marked.parse(markdown || '', { breaks: true }), {
+    USE_PROFILES: { html: true }, FORBID_TAGS: ['style', 'form', 'input', 'button', 'img'], FORBID_ATTR: ['style', 'id', 'name'], RETURN_DOM_FRAGMENT: true
+  }));
+  for (const link of $$('a', container)) {
+    if (/^https?:/i.test(link.getAttribute('href') || '')) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+    else link.removeAttribute('href');
+  }
+  return container;
+}
+// 卡片只显示两行，大目录下数百张卡片不值得逐个解析 Markdown，去掉标记即可。
+function cardText(markdown) {
+  return String(markdown || '').replace(/```[\s\S]*?```/g, ' ').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[`*]/g, '').replace(/\\([<>])/g, '$1').replace(/^\s*- /gm, '').replace(/\s+/g, ' ').trim();
+}
 function roleFor(node, path = state.path) {
   return state.roles.get([...path, node.id.replace(/\|file$/, '')].join('/'));
 }
@@ -446,7 +463,7 @@ function renderMap() {
     for (const event of ['pointerleave', 'blur']) card.addEventListener(event, () => { if (state.hovered === node.id) { state.hovered = null; applyHighlight(); } });
     const heading = element('div', 'node-heading'); heading.append(icon(nodeIcon(node), 'node-symbol'), element('span', 'node-name', titleFor(node)));
     if (node.buildModule) heading.append(element('span', 'build-tag', BUILD_TOOLS[node.buildModule.buildTool] || '模块'));
-    card.append(heading, element('p', 'node-description', descriptionFor(node) || (node.leaf ? '源码文件 · 点击查看依赖与说明' :
+    card.append(heading, element('p', 'node-description', cardText(descriptionFor(node)) || (node.leaf ? '源码文件 · 点击查看依赖与说明' :
       node.buildModule ? `${buildModuleKind(node.buildModule)} · ${node.moduleCount} 个源码模块 · 双击查看内部结构` : `${node.moduleCount} 个源码模块 · 双击查看内部结构`)));
     const bottom = element('div', 'node-bottom'); bottom.append(element('span', '', node.buildModule ? `${buildModuleDirectory(node.buildModule)} / ${node.moduleCount}` : `${node.label} / ${node.moduleCount}`));
     bottom.append(complexityBadge(node.complexity));
@@ -840,7 +857,10 @@ function renderDetail() {
   const role = roleFor(node);
   if (role) panel.append(statusChoices(role));
   if (node.cycle) panel.append(element('span', 'cycle-badge', '包含循环依赖'));
-  const description = element('div', 'detail-description'); description.append(element('p', '', descriptionFor(node) || (node.leaf ? '该文件没有可提取的文件头说明。' : `包含 ${node.moduleCount} 个源码模块，可以进入查看内部结构。`)));
+  const description = element('div', 'detail-description');
+  // 文档角色的职责已是纯文本；源码文件头说明按 Markdown 渲染。
+  description.append(!role?.summary && node.description ? richText(node.description) :
+    element('p', '', descriptionFor(node) || (node.leaf ? '该文件没有可提取的文件头说明。' : `包含 ${node.moduleCount} 个源码模块，可以进入查看内部结构。`)));
   if (descriptionFor(node)) {
     const provenance = role?.summary ? `来自 ${state.document.path} · 实现状态由维护者标注` :
       node.descriptionFromOnlyFile ? '来自目录中唯一源码文件的说明' : '来自文件头注释 / 模块文档字符串';
@@ -990,7 +1010,7 @@ async function showSource(module, line) {
   try {
     const source = await api('/api/source', { module }); if (request !== state.sourceRequest) return;
     openDrawer(module.split('.').at(-1), source.path, '源码文件');
-    if (source.description) $('#drawer-content').append(element('div', 'source-description', source.description));
+    if (source.description) $('#drawer-content').append(richText(source.description, 'source-description'));
     const list = element('ol', 'source-list'); source.content.split('\n').forEach(line => list.append(element('li', '', line || ' '))); $('#drawer-content').append(list);
     const target = line && list.children[line - 1];
     if (target) { target.classList.add('source-target'); target.scrollIntoView({ block: 'center' }); }

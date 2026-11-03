@@ -1,8 +1,9 @@
-;; 工具函数：查找已有的项目说明和包内说明，提取文件头注释，并限制文件读取范围。
+;; 工具函数：查找已有的项目说明和包内说明，提取文件头注释（合并版权头与类说明，Javadoc 转 Markdown），并限制文件读取范围。
 
 (ns arch-view.web.documents
   "Optional existing documents and file headers. No AI or project writes."
-  (:require [clojure.java.io :as io]
+  (:require [arch-view.web.javadoc :as javadoc]
+            [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [java.nio.file Path]))
 
@@ -66,26 +67,67 @@
   (let [file (contained-file root (io/file (.toFile ^Path root) id))]
     {:id id :path id :content (slurp file :encoding "UTF-8")}))
 
-(defn- clean-comment [text]
-  (->> (str/split-lines text)
-       (map #(-> %
-                 (str/replace #"^\s*(?:;+|#+|//+|\*+)\s?" "")
-                 str/trimr))
-       (remove #(or (re-find #"(?i)copyright|SPDX-License|coding[:=]|^!|^mutation-tested:" %)
-                    (str/blank? %)))
-       (str/join "\n")
-       str/trim))
+;; 版权头里的版权行和公司署名都是样板；署名只在同一段出现版权行时才去掉，避免误伤正文。
+(def ^:private license-line #"(?i)copyright|all rights reserved|SPDX-License|licensed under")
+(def ^:private signature-line
+  #"(?i)^[\p{L}\p{N}.,&()（） \-]*?(?:\binc|\bltd|\bcorp|\bllc|\bgmbh|\.com|有限公司|集团)\.?$")
+(def ^:private noise-line #"(?i)coding[:=]|^!|^mutation-tested:")
 
-(defn header-description [source]
-  (let [source (str/replace source #"^\uFEFF" "")
-        lines (str/split-lines source)
-        leading (->> lines
+(defn- strip-license [lines]
+  (if (some #(re-find license-line %) lines)
+    (remove #(or (re-find license-line %) (re-find signature-line (str/trim %))) lines)
+    lines))
+
+(defn- clean-lines [lines]
+  (->> lines
+       (map #(str/trim (str/replace % #"^\s*(?:;+|#+|//+|\*+)\s?" "")))
+       strip-license
+       (remove #(or (re-find noise-line %) (str/blank? %)))
+       (str/join "\n")))
+
+(defn- clean-comment [text]
+  (clean-lines (str/split-lines text)))
+
+;; Java/Kotlin 前导区：空白、注释、package/import 与文件级注解，到第一行代码为止。
+(def ^:private prelude-token
+  #"\A(?:\s+|//[^\n]*|(?s:/\*.*?\*/)|(?:package|import)\b[^\n]*|@file:[^\n]*|#![^\n]*)")
+
+(defn- prelude-segments
+  "返回前导区里的注释段；连续的 // 行合成一段，空行、声明或块注释会断开。"
+  [source]
+  (loop [text source segments [] open? false]
+    (if-let [token (re-find prelude-token text)]
+      (let [text (subs text (count token))
+            same-run? (and open? (str/blank? token) (< (count (re-seq #"\n" token)) 2))]
+        (cond
+          (and (str/starts-with? token "//") open?) (recur text (conj (pop segments) (str (peek segments) "\n" token)) true)
+          (str/starts-with? token "//") (recur text (conj segments token) true)
+          (str/starts-with? token "/*") (recur text (conj segments token) false)
+          :else (recur text segments same-run?)))
+      segments)))
+
+(defn- segment-text [segment]
+  (if (str/starts-with? segment "//")
+    (not-empty (clean-comment segment))
+    (let [body (str/replace segment #"(?s)\A/\*+(.*?)\*+/\z" "$1")]
+      (javadoc/markdown (strip-license (map #(str/replace % #"^\s*\*+ ?" "") (str/split-lines body)))))))
+
+(defn- script-description
+  "Clojure/Python 等脚本式源码：开头的 ; 或 # 行注释优先，其次是模块文档字符串。"
+  [source]
+  (let [leading (->> (str/split-lines source)
                      (drop-while #(or (str/blank? %) (str/starts-with? % "#!")))
-                     (take-while #(or (str/blank? %) (re-find #"^\s*(?:[;#]|//)" %)))
+                     (take-while #(or (str/blank? %) (re-find #"^\s*[;#]" %)))
                      (str/join "\n"))
-        ;; Java/Kotlin 的类说明写在 package 和 import 之后，先跳过这些声明行。
-        block (second (re-find #"(?s)^\s*(?:(?:package|import)\b[^\n]*\n\s*)*/\*+(.*?)\*/" source))
         python-doc (second (re-find #"(?s)^\s*(?:#![^\n]*\n\s*)?(?:#[^\n]*\n\s*)*[uUrR]?(?:\"\"\"|''')(.*?)(?:\"\"\"|''')" source))
-        ns-doc (second (re-find #"(?s)\(ns\s+[^\s()]+\s+\"((?:\\.|[^\"\\])*)\"" source))
-        text (if (seq (clean-comment leading)) leading (or block python-doc ns-doc ""))]
-    (not-empty (clean-comment text))))
+        ns-doc (second (re-find #"(?s)\(ns\s+[^\s()]+\s+\"((?:\\.|[^\"\\])*)\"" source))]
+    (not-empty (if (seq (clean-comment leading)) (clean-comment leading) (clean-comment (or python-doc ns-doc ""))))))
+
+(defn header-description
+  "返回 Markdown 格式的文件说明。Java/Kotlin 合并前导区里的所有注释段（如版权头 + import 后的类说明）。"
+  [source]
+  (let [source (-> source (str/replace #"^\uFEFF" "") (str/replace #"\r\n?" "\n"))
+        texts (distinct (keep segment-text (prelude-segments source)))]
+    (if (seq texts)
+      (str/join "\n\n" texts)
+      (script-description source))))
