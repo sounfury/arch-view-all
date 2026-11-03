@@ -436,3 +436,72 @@ button.node.cyclic .node-symbol { color:var(--orange); }
 .complexity-badge.high,.complexity-value.high { color:#b4472f; border-color:#f0cfc3; background:#fdf0eb; }
 .complexity-function .complexity-value { font-size:10px; }
 .source-list li.source-target { background:#fff4d6; }
+
+/* AI 辅助探索：调用链路列表、链路叠加、逐跳校验、解释列表与提问面板。 */
+.trace-nav { max-height:22vh; flex-shrink:0; min-height:48px; }
+.trace-nav[hidden] { min-height:0; }
+.trace-link { min-height:48px; }
+#trace-title { flex-shrink:0; }
+.rail { overflow-y:auto; }
+.module-nav { flex-shrink:0; }
+.trace-link.needs-review .module-copy small { color:var(--orange); }
+button.node.trace-off { opacity:.35; }
+button.node.trace-current { border-color:#3a7950; box-shadow:0 0 0 3px #3a795026; }
+.trace-badge { position:absolute; top:-10px; right:12px; padding:1px 8px; border-radius:10px; background:var(--green); color:#fff; font:600 10px/1.6 var(--mono); box-shadow:0 2px 5px #24654d30; }
+.map-world>svg.trace-overlay { z-index:0; }
+.trace-hop-line { fill:none; stroke-width:2.6; stroke:#2f7a59; opacity:.85; }
+.trace-hop-line.indirect { stroke:#5d8f6f; stroke-dasharray:7 4; }
+.trace-hop-line.reverse { stroke:#8a6fb0; stroke-dasharray:3 4; }
+.trace-hop-line.unverified { stroke:#c4573a; stroke-dasharray:8 6; }
+.trace-hop-line.unmapped { stroke:#9aa494; stroke-dasharray:2 5; }
+.trace-arrow-head { fill:#2f7a59; }
+.map-world>svg text.trace-hop-label { font:600 10px var(--mono); fill:#2f7a59; paint-order:stroke; stroke:#f5f6f2; stroke-width:3px; }
+.trace-question { margin:10px 0 0!important; font-style:italic; }
+.trace-verdict { display:grid; gap:3px; margin:14px 0; padding:10px 12px; border-radius:7px; border:1px solid #d4e5cc; background:#f1f8eb; font-size:11px; color:#5d7d4c; }
+.trace-verdict strong { font-size:12px; color:var(--green); }
+.trace-verdict.needs-review { border-color:#f0cfc3; background:#fdf0eb; color:#a5573f; }
+.trace-verdict.needs-review strong,.trace-verdict.stale strong { color:#b4472f; }
+.trace-verdict.stale { border-color:#f1dec0; background:#fff9ed; color:#ae844d; }
+.trace-summary { font-size:12px; color:#6f8361; }
+.trace-steps { list-style:none; margin:16px 0; padding:0; display:grid; gap:4px; }
+.trace-step { border:1px solid var(--line); border-radius:8px; background:var(--surface); padding:10px 12px; }
+.trace-step.current { border-color:#3a7950; box-shadow:0 0 0 2px #38765015; }
+.trace-step-head { display:flex; align-items:center; gap:9px; width:100%; border:0; background:transparent; padding:0; text-align:left; color:var(--ink); font-weight:600; font-size:13px; }
+.trace-number { display:inline-grid; place-items:center; min-width:22px; height:22px; border-radius:11px; background:var(--green); color:#fff; font:600 11px var(--mono); }
+.trace-where { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:6px 0 0 31px; font:11px var(--mono); }
+.trace-where .text-button { font:inherit; text-align:left; overflow-wrap:anywhere; }
+.trace-module { margin:2px 0 0 31px; font:10px var(--mono); color:#98a491; overflow-wrap:anywhere; }
+.trace-explanation { margin:6px 0 0 31px; font-size:12px; }
+.trace-hop { display:flex; flex-wrap:wrap; align-items:center; gap:7px; padding:2px 0 2px 21px; font-size:11px; color:#5d8f6f; }
+.trace-hop small { flex-basis:100%; padding-left:22px; font:10px var(--mono); color:#98a491; overflow-wrap:anywhere; }
+.trace-hop-mark { display:inline-grid; place-items:center; width:16px; font:700 12px var(--mono); }
+.trace-hop.unverified { color:#b4472f; font-weight:600; }
+.trace-hop.reverse { color:#8a6fb0; }
+.trace-hop.unmapped,.trace-hop.same-module { color:#98a491; }
+.anchor-status { display:inline-flex; padding:1px 6px; border-radius:4px; font:10px/1.5 var(--body); white-space:nowrap; color:#698956; background:#f1f8eb; border:1px solid #dde9d5; }
+.anchor-status.moved { color:#5d7d9c; background:#eef4fa; border-color:#d3e1ee; }
+.anchor-status.stale,.anchor-status.missing { color:#b4472f; background:#fdf0eb; border-color:#f0cfc3; }
+.anchor-status.unanchored { color:#9ca88e; background:#f8faf4; border-color:#e7edde; }
+.ai-actions { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+.note-list { display:grid; gap:6px; }
+.note-item { border:1px solid var(--line); border-radius:7px; background:var(--surface); padding:8px 11px; }
+.note-item.stale,.note-item.missing { border-color:#f0cfc3; }
+.note-item summary { display:flex; justify-content:space-between; gap:8px; cursor:pointer; font-size:12px; font-weight:600; }
+.note-item .rich-text { margin-top:8px; font-size:12px; }
+.note-anchors { display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:8px; font:10px var(--mono); }
+.note-anchors .text-button,.code-link { font:11px var(--mono); text-decoration:underline dotted; }
+.ask-form { display:grid; gap:10px; }
+.ask-form textarea { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:7px; resize:vertical; font:13px/1.7 var(--body); color:var(--ink); }
+.ask-form .button.primary { margin-top:0; justify-self:start; }
+.ask-output { margin-top:20px; }
+.ask-history,.ask-config { max-width:100%; min-width:12em; font:12px var(--body); color:var(--ink); }
+.ask-configs { display:flex; flex-wrap:wrap; gap:8px; }
+.ask-config { min-width:10em; }
+.ask-turn { margin-bottom:18px; padding-bottom:14px; border-bottom:1px solid var(--line); }
+.ask-question { margin:0 0 8px; font-size:13px; font-weight:600; }
+.ask-waiting { color:var(--muted); }
+.ask-error { color:#b4472f; }
+.ask-answer,.ask-stream-text { font-size:13px; line-height:1.9; }
+.ask-stream-text { white-space:pre-wrap; }
+.agent-hint { margin-top:12px; padding:12px 14px; border:1px solid #f1dec0; border-radius:7px; background:#fff9ed; color:#8e6a3c; font-size:12px; }
+.agent-hint p { margin:0 0 10px; }

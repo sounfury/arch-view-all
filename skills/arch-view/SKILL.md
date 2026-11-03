@@ -1,9 +1,9 @@
 ---
 name: arch-view
-description: 使用 arch-view 命令查看项目架构图、代码依赖、模块关系、循环依赖、函数复杂度和文档数据流，或按其模板生成、维护 ARCHITECTURE.md。适用于新项目架构草案和老项目架构整理。
+description: 使用 arch-view 命令查看项目架构图、代码依赖、模块关系、循环依赖、函数复杂度和文档数据流，按其模板生成、维护 ARCHITECTURE.md；也用于解释模块、文件或包的职责，梳理一条调用链路（如“点击后发生了什么”），查询谁依赖谁、改动影响哪些模块，并把解释和链路保存为可检查过期的项目知识。适用于新项目架构草案、老项目架构整理和接手陌生代码库。
 ---
 
-<!-- 职责：指导 AI 配合 arch-view 命令生成宏观架构说明，并打开可视化工作台。 -->
+<!-- 职责：指导 AI 配合 arch-view 命令生成宏观架构说明、打开可视化工作台，并用查询、上下文包、链路和解释命令辅助理解代码。 -->
 
 # 架构说明与可视化
 
@@ -15,7 +15,13 @@ description: 使用 arch-view 命令查看项目架构图、代码依赖、模�
 
 保持文档简短，只维护项目背景、子系统职责和关键数据流；主要职责、边界或数据流变化时才更新。Mermaid 节点标识与子系统标题一致，探索链接单独填写实际代码包路径；数据流不等同于代码依赖。实现状态必须写进 `ARCHITECTURE.md`，网页只保存用户的选择，不会按源码自动补齐；生成文档不代表获准修改业务代码。
 
+## 解释代码与链路
+
+用户问“这个模块/文件/包做什么”“这条流程怎么走”“谁依赖它”“改这里影响哪些地方”时，先读[代码与链路解释](references/ai-exploration.md)。要点：先 `arch-view notes list` / `trace list` 看已有知识；解释前用 `arch-view context <目标> --question "…"` 取上下文包，用 `arch-view query …` 查依赖事实，不凭文件名猜；链路写成草稿后 `arch-view trace save` 逐跳校验，对缺少静态证据的跳说明依据；用户认可的解释用 `arch-view notes save` 保存。引用代码写 `路径:行号`。
+
 按需读取参考：
+
+- 解释模块、梳理链路、查询依赖与改动影响、保存或检查解释：[代码与链路解释](references/ai-exploration.md)。
 
 - 编写或补齐文档、确定实现状态：[架构模板](references/architecture-template.md)、[生成提示词](references/architecture-prompts.md)。
 - 写代码、整理老项目的文件头说明、为大包建包级 `ARCHITECTURE.md`，或用户关心函数复杂度、门禁：[网页读取规则](references/web-behavior.md)。

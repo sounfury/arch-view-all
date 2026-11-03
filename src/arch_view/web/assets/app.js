@@ -6,6 +6,7 @@
 // 页面脚本作为独立模块加载，内部函数和状态不向外部公开。
 'use strict';
 import { parseArchitectureDocument, renderDataFlow, uncoveredModules } from './architecture_document.js';
+import { createExploration } from './exploration.js';
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const CARD = { width: 240, height: 144, stride: 272, row: 178 };
@@ -432,7 +433,7 @@ function renderMap() {
   if (state.diagramKind === 'flow') { renderFlowMap(request); return; }
   const world = $('#map-world'); world.replaceChildren();
   world.classList.remove('flow-world');
-  const nodes = visibleNodes(state.view);
+  const nodes = exploration.mapNodes(visibleNodes(state.view));
   $('#metric-groups').textContent = nodes.length;
   const layout = positionsFor(nodes); state.world = layout; state.positions = layout.positions;
   world.style.width = `${layout.width}px`; world.style.height = `${layout.height}px`;
@@ -469,7 +470,9 @@ function renderMap() {
     bottom.append(complexityBadge(node.complexity));
     if (roleFor(node)) bottom.append(statusBadge(roleFor(node).status));
     bottom.append(icon(node.leaf ? 'external' : 'arrow', 'node-arrow')); card.append(bottom); world.append(card);
-  } applyHighlight();
+  }
+  exploration.decorateMap(world, layout.positions, nodes);
+  applyHighlight();
 }
 
 function statusBadge(status) {
@@ -728,7 +731,7 @@ function clickOutsideCanvas(event) {
   const target = event.target;
   if (!(target instanceof Element)) return;
   if (target.closest('#map-viewport, #map-return, #drawer, #drawer-backdrop, #toast')) return;
-  if (target.closest('.status-choices, .detail-actions, .relation-list, .module-link, .cycle-line, .coverage-modules')) return;
+  if (target.closest('.status-choices, .detail-actions, .relation-list, .module-link, .cycle-line, .coverage-modules, .trace-steps, .ai-section')) return;
   clearMapSelection();
 }
 
@@ -848,6 +851,8 @@ function relationSection(title, edges, incoming) {
 function renderDetail() {
   if (state.diagramKind === 'flow') { renderFlowDetail(); return; }
   const panel = $('#detail-panel'); const node = state.selected;
+  // 查看链路时右侧固定显示步骤；点步骤会在图上定位模块，关闭链路后恢复模块详情。
+  if (exploration.traceActive()) { exploration.renderTraceDetail(panel); return; }
   if (!node) {
     renderEmptyDetail(panel); return;
   }
@@ -868,6 +873,7 @@ function renderDetail() {
   }
   panel.append(description);
   const actions = element('div', 'detail-actions'); actions.append(button(node.leaf ? '查看源码 ↗' : '查看内部结构 ↘', 'button primary', () => enterNode(node))); panel.append(actions);
+  panel.append(exploration.aiSection(node));
   if (role) panel.append(subsystemDetails(role));
   panel.append(complexitySection(node));
   const edges = state.view.displayEdges;
@@ -1027,7 +1033,7 @@ async function reanalyze() {
     await loadDocument(doc?.id || '');
     let path = state.path;
     if (path.length && !(await fetchView(path)).nodes.length) path = [];
-    await navigate(path, state.mode); toast('架构与项目说明已更新'); watchComplexity();
+    await navigate(path, state.mode); toast('架构与项目说明已更新'); watchComplexity(); exploration.loadTraces();
   } catch (error) { toast(error.message); }
   finally { control.disabled = false; control.classList.remove('busy'); control.replaceChildren(icon('refresh'), element('span', '', '重新分析')); }
 }
@@ -1087,6 +1093,17 @@ new ResizeObserver(() => {
     state.zoom = camera.zoom; state.pan = camera.pan; applyZoom(); $('#map-viewport').scrollTo(camera.left, camera.top);
   } else { fitMap(); if (state.selected && state.diagramKind === 'code') focusSelectedNode(); }
 }).observe($('#map-viewport'));
+// AI 辅助探索（解释、上下文包、调用链路）放在独立模块，只借用这里的页面能力。
+const exploration = createExploration({
+  state, api, element, button, icon, richText, toast, openDrawer, showSource, navigate, fitMap, routeEdge, svgElement, $,
+  focusModule: module => {
+    const node = state.view?.nodes.find(item => item.members.includes(module));
+    if (node) { selectNode(node.id); focusSelectedNode(); }
+  },
+  setDiagramKind: kind => { state.diagramKind = kind; },
+  refresh: () => { if (!state.view) return; renderMap(); applyZoom(); renderDetail(); },
+  refreshDetail: () => renderDetail(),
+});
 (async function initialize() {
   try {
     state.project = await api('/api/project'); updateProject();
@@ -1094,6 +1111,7 @@ new ResizeObserver(() => {
     state.complexity = state.project.complexity || state.complexity; renderComplexityToggle();
     const doc = state.project.documents.find(d => d.scope === 'project'); await loadDocument(doc?.id || '');
     await navigate([], 'overview');
+    exploration.loadTraces();
     if (state.complexity.status === 'running') watchComplexity();
   } catch (error) { $('#hero-summary').textContent = `加载失败：${error.message}`; toast(error.message); }
 })();

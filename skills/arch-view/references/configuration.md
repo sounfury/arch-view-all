@@ -17,6 +17,11 @@
 | `ARCH_VIEW_EDGE_SCOPE` | `focus` / `all` | `focus` | 网页初始连线范围：当前模块或全部模块；页面下拉框仍可切换 | `serve` |
 | `ARCH_VIEW_CRAP` | `auto` / `off` | `auto` | 发现 crap 命令时在后台分析函数圈复杂度，卡片和详情显示结果；只跑复杂度、不运行测试、不写报告文件 | `serve` |
 | `ARCH_VIEW_CRAP_COMMAND` | 可执行文件路径 | 在 PATH 中查找 `crap` | crap 不在 PATH 上时指定其路径 | `serve` |
+| `ARCH_VIEW_AGENT_PROVIDER` | `auto` / `pi-acp` / `pi` / `command` | `auto` | 网页 AI 适配器；`pi-acp` 多轮对话，`pi` 一次性提问，均可省略命令 | `serve` |
+| `ARCH_VIEW_AGENT_COMMAND` | 命令及参数 | 未配置；`pi-acp`/`pi` 模式为其自身 | 例如 `pi-acp`、`pi --model …`、`claude -p`、`codex exec`；均在只读沙箱内执行 | `serve` |
+| `ARCH_VIEW_PI_COMMAND` | 命令及参数 | `pi` | 仅 `pi-acp`：底层 pi 的路径和模型（`--model` / `--provider` / `--thinking` / `--models`） | `serve` |
+| `ARCH_VIEW_AGENT_STATE_DIR` | 目录 | `~/.local/state/arch-view/acp` | `pi-acp` 会话快照根目录，按项目隔离；不写入被分析仓库 | `serve` |
+| `ARCH_VIEW_AGENT_TIMEOUT` | 正整数秒 | `180` | AI 命令超时，超时后终止进程 | `serve` |
 | `ARCH_VIEW_LANGUAGE` | `auto` / `clojure` / `python` / `kotlin` / `java` | `auto` | 分析语言，`auto` 按项目文件识别 | 全部 |
 | `ARCH_VIEW_INCLUDE_TESTS` | `true` / `false` | `false` | 是否分析 Python 测试文件 | 全部 |
 | `ARCH_VIEW_UI_SCALE` | 正数，如 `1.25` | `1.25` | 桌面界面与字体缩放 | `desktop` |
@@ -35,4 +40,6 @@
 - Java/Kotlin 没有显式源码路径且发现至少两个 Maven/Gradle 构建模块时，自动按“构建模块 → 包 → 文件”浏览，只扫描模块主源码目录，不扫描标准测试目录。构建模块按构建文件及目录发现，不读取或执行构建脚本。
 - `--source-path`（可重复）或 `ARCH_VIEW_SOURCE_PATHS` 会覆盖自动源码目录并关闭构建模块分组，节点继续使用原包名格式；自定义布局和需要扫描测试时使用该选项。仅发现一个构建模块时输出保持原样。
 - 模块名取目录名，`.` 替换为 `_`；重名时用 `:` 连接相对路径。根架构文档用 `#module=user-api` 等链接匹配构建模块角色。
+- 网页 AI 调用强制使用系统只读沙箱，不提供关闭隔离的配置。Linux 需要 Python 3、Landlock ABI ≥3 和系统 `libseccomp.so.2`；macOS 使用 `sandbox-exec`。无法建立沙箱时拒绝调用；仍可复制上下文包给外部 AI。
+- pi 模式使用私有临时配置，不保存会话，关闭写工具、扩展、MCP 和项目配置；只开放 `read/grep/find/ls`。命令仅支持模型选择参数和安全的非交互标志。认证和模型文件来自本机 pi 配置，原文件不改动。
 - 命令行参数见 `arch-view <命令> --help`。

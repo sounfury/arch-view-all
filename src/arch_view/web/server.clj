@@ -5,6 +5,7 @@
   "Independent localhost Web UI. The existing desktop entry point is unchanged."
   (:require [arch-view.core :as core]
             [arch-view.config :as config]
+            [arch-view.context.sessions :as sessions]
             [arch-view.web.complexity :as complexity]
             [arch-view.web.json :as json]
             [arch-view.web.model :as model]
@@ -22,7 +23,9 @@
 (defn start! [architecture project-path opts reload!]
   (let [state (atom (assoc (model/create-state architecture project-path opts) :can-reanalyze (boolean reload!)))
         {:keys [server requested-port]} (bind-server opts)
-        executor (Executors/newFixedThreadPool 4)
+        executor (Executors/newFixedThreadPool 8)
+        manager (sessions/create-manager)
+        _ (swap! state assoc :agent-sessions manager)
         port (.getPort (.getAddress server))
         analyze-complexity! #(complexity/start! state (:root @state) opts)]
     (analyze-complexity!)
@@ -39,7 +42,7 @@
     (.setExecutor server executor)
     (.start server)
     {:port port :requested-port requested-port :url (str "http://127.0.0.1:" port)
-     :stop (fn [] (.stop server 0) (.shutdownNow executor))}))
+     :stop (fn [] (.stop server 0) (sessions/close! manager) (.shutdownNow executor))}))
 
 (defn -main [& args]
   (try
@@ -170,6 +173,7 @@
    "/app.css" ["app.css" "text/css; charset=utf-8"]
    "/app.js" ["app.js" "text/javascript; charset=utf-8"]
    "/architecture_document.js" ["architecture_document.js" "text/javascript; charset=utf-8"]
+   "/exploration.js" ["exploration.js" "text/javascript; charset=utf-8"]
    "/vendor/mermaid.min.js" ["vendor/mermaid.min.js" "text/javascript; charset=utf-8"]
    "/vendor/marked.umd.js" ["vendor/marked.umd.js" "text/javascript; charset=utf-8"]
    "/vendor/purify.min.js" ["vendor/purify.min.js" "text/javascript; charset=utf-8"]})
@@ -191,9 +195,28 @@
    ["GET" "/api/source"] (fn [state params] (model/source-data state (get params "module")))
    ["GET" "/api/locate"] (fn [state params] (model/locate-data state (get params "module")))
    ["GET" "/api/document"] (fn [state params] (model/document-data state (get params "id")))
+   ["GET" "/api/file"] (fn [state params] (model/file-data state (get params "path")))
    ["POST" "/api/subsystem-status"]
    (fn [state params]
      (model/update-subsystem-status! state (get params "id") (get params "heading") (get params "status")))})
+
+;; AI 探索功能的接口由各自命名空间的 routes 提供，首次请求时合并。
+;; 明写解析目标，也让静态分析能识别服务端对各功能入口的依赖。
+(def ^:private all-routes
+  (delay (merge json-routes
+                @(requiring-resolve 'arch-view.context.web/routes)
+                @(requiring-resolve 'arch-view.trace.web/routes)
+                @(requiring-resolve 'arch-view.notes.web/routes))))
+
+(def ^:private max-body-bytes (* 2 1024 1024))
+
+(defn- request-params [^HttpExchange exchange method]
+  (let [params (query-params exchange)]
+    (if (= method "POST")
+      (let [bytes (.readNBytes (.getRequestBody exchange) (inc max-body-bytes))]
+        (when (> (alength bytes) max-body-bytes) (throw (ex-info "请求内容过大" {:status 413})))
+        (assoc params "body" (String. bytes "UTF-8")))
+      params)))
 
 (def ^:private image-types
   {"png" "image/png" "jpg" "image/jpeg" "jpeg" "image/jpeg" "gif" "image/gif" "webp" "image/webp" "svg" "image/svg+xml"})
@@ -211,17 +234,32 @@
 
 (defn- reanalyze! [exchange state reload! analyze-complexity!]
   (if reload!
-    (do (locking state (reset! state (assoc (reload!) :can-reanalyze true)) (analyze-complexity!))
+    (do (locking state (reset! state (assoc (reload!) :can-reanalyze true
+                                           :agent-sessions (:agent-sessions @state)))
+                 (analyze-complexity!))
         (json! exchange 200 (model/project-data @state)))
     (json! exchange 409 {:error "EDN 快照不支持重新分析"})))
+
+(defn- ask-stream! [^HttpExchange exchange state params]
+  (let [headers (.getResponseHeaders exchange)]
+    (.set headers "Content-Type" "text/event-stream; charset=utf-8")
+    (.set headers "Cache-Control" "no-store")
+    (.set headers "X-Content-Type-Options" "nosniff")
+    (.sendResponseHeaders exchange 200 0)
+    (with-open [output (.getResponseBody exchange)]
+      (let [emit (fn [event data]
+                   (let [bytes (.getBytes (str "event: " event "\ndata: " (json/write-json data) "\n\n") "UTF-8")]
+                     (locking output (.write output bytes) (.flush output))))]
+        ((requiring-resolve 'arch-view.context.web/stream!) state params emit)))))
 
 (defn- route! [exchange state reload! analyze-complexity!]
   (let [path (.getPath (.getRequestURI ^HttpExchange exchange))
         method (.getRequestMethod ^HttpExchange exchange)
-        params (query-params exchange)
-        handler (get json-routes [method path])]
+        params (request-params exchange method)
+        handler (get @all-routes [method path])]
     (cond
       (and (= method "GET") (contains? assets path)) (send-asset! exchange path)
+      (= [method path] ["POST" "/api/ask/stream"]) (ask-stream! exchange @state params)
       handler (json! exchange 200 (handler @state params))
       (= [method path] ["GET" "/api/image"]) (send-image! exchange @state params)
       (= [method path] ["POST" "/api/reanalyze"]) (reanalyze! exchange state reload! analyze-complexity!)

@@ -3,6 +3,7 @@
 
 (ns arch-view.web.model
   (:require [arch-view.domain.architecture-projection :as projection]
+            [arch-view.context.provider :as provider]
             [arch-view.web.complexity :as complexity]
             [arch-view.web.documents :as documents]
             [clojure.java.io :as io]
@@ -30,6 +31,10 @@
    :dependencyCount (count (get-in architecture [:graph :edges]))
    :canReanalyze (boolean can-reanalyze)
    :edgeScope (get opts :edge-scope "focus")
+   :agentConfigured (or (contains? #{"pi" "pi-acp"} (:agent-provider opts))
+                        (not (str/blank? (str (:agent-command opts)))))
+   :agentSessions (try (= "pi-acp" (:provider (provider/configuration state)))
+                       (catch Exception _ false))
    :complexity (complexity/summary (:complexity state))
    :documents documents})
 
@@ -62,6 +67,19 @@
     (let [file (documents/contained-file root path)
           content (slurp file :encoding "UTF-8")]
       {:module module :path (documents/relative-path root file)
+       :description (documents/header-description content) :content content})))
+
+(def ^:private max-file-bytes (* 2 1024 1024))
+
+(defn file-data
+  "读取项目内任意文本文件（链路步骤可能落在前端、配置等未分析的文件上）。"
+  [{:keys [root]} path]
+  (when (str/blank? path) (throw (ex-info "缺少文件路径" {:status 400})))
+  (let [file (documents/contained-file root (io/file (.toFile ^java.nio.file.Path root) ^String path))]
+    (when-not (.isFile file) (throw (ex-info "文件不存在" {:status 404})))
+    (when (> (.length file) max-file-bytes) (throw (ex-info "文件过大，无法在网页中查看" {:status 413})))
+    (let [content (slurp file :encoding "UTF-8")]
+      {:path (documents/relative-path root file)
        :description (documents/header-description content) :content content})))
 
 (defn document-data [{:keys [root documents]} id]

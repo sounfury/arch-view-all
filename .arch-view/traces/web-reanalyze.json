@@ -1,0 +1,82 @@
+{
+  "id": "web-reanalyze",
+  "title": "网页点击重新分析",
+  "question": "点击重新分析后，源码如何重新扫描并计算架构层级？",
+  "summary": "前端通过 HTTP 请求触发服务端重新加载架构。core 先构建模块依赖图，返回后再分配层级。逐跳结果只说明模块级静态依赖，回调和 HTTP 调用需要结合锚点核对。",
+  "steps": [
+    {
+      "title": "前端请求重新分析",
+      "explanation": "reanalyze 向 /api/reanalyze 发出 POST 请求，再刷新项目和当前视图。",
+      "anchor": {
+        "path": "src/arch_view/web/assets/app.js",
+        "startLine": 1025,
+        "endLine": 1028,
+        "hash": "sha256:3de43f4d5d56cbcb905fd687ba740e04c758da9077b909c0ec3a1e7e94c1b846",
+        "symbol": "reanalyze"
+      }
+    },
+    {
+      "title": "服务端调用重新加载回调",
+      "explanation": "reanalyze! 调用 reload! 并替换服务状态；reload! 在启动时绑定到 core/load-architecture。HTTP 边界没有 Clojure 模块映射。",
+      "anchor": {
+        "path": "src/arch_view/web/server.clj",
+        "startLine": 232,
+        "endLine": 236,
+        "hash": "sha256:ac5504e1aa329225c4b692d59564d09fd11c5b8273030444be3edfb1b573e670",
+        "symbol": "reanalyze!"
+      },
+      "via": "http"
+    },
+    {
+      "title": "core 组织源码扫描",
+      "explanation": "load-architecture 确定语言和扫描目录，并调用 languages/build-module-graph。",
+      "anchor": {
+        "path": "src/arch_view/core.clj",
+        "startLine": 40,
+        "endLine": 49,
+        "hash": "sha256:093cbc30f485ac181593c927b1017528e668b83c6b2949384c264d1f7315b79d",
+        "symbol": "load-architecture"
+      },
+      "via": "call"
+    },
+    {
+      "title": "语言适配器构建依赖图",
+      "explanation": "build-module-graph 选择语言适配器，返回包含节点、依赖边和源码文件映射的图。",
+      "anchor": {
+        "path": "src/arch_view/input/languages.clj",
+        "startLine": 48,
+        "endLine": 56,
+        "hash": "sha256:6d67abf87fff8a914323c7b53e4e0cab0fa77d220b25843d501a7e922e7e0a04",
+        "symbol": "build-module-graph"
+      },
+      "via": "call"
+    },
+    {
+      "title": "返回 core 并发起布局计算",
+      "explanation": "扫描结果返回 core 后交给 layers/assign-layers；返回方向会标为 reverse。",
+      "anchor": {
+        "path": "src/arch_view/core.clj",
+        "startLine": 50,
+        "endLine": 52,
+        "hash": "sha256:17fda85729211cb4a82dc96c8f3ace5edfa7a39ff0dc1a04840bbb8f0b1a306f",
+        "symbol": "load-architecture"
+      },
+      "via": "return"
+    },
+    {
+      "title": "计算层级和循环依赖",
+      "explanation": "assign-layers 找出反馈边、计算无环图的拓扑层级，并返回分层结果。",
+      "anchor": {
+        "path": "src/arch_view/layout/layers.clj",
+        "startLine": 321,
+        "endLine": 344,
+        "hash": "sha256:43dd01ee01ae55232f7a10abcf81184f886e3c58e781d4870fa94ca20a86f20f",
+        "symbol": "assign-layers"
+      },
+      "via": "call"
+    }
+  ],
+  "createdAt": "2026-11-03T03:59:48.555479572Z",
+  "commit": "7ad509ebae7c3d0cdc60e47a0b8aea8e9da7f367",
+  "author": "ai"
+}

@@ -1,0 +1,21 @@
+{
+  "anchors": [
+    {
+      "path": "src/arch_view/web/model.clj",
+      "startLine": 38,
+      "endLine": 59,
+      "hash": "sha256:714ea15345c712b4656aea698e2c66d369a913bfd4e4ad01680c598d9f67db75",
+      "symbol": "view-data"
+    }
+  ],
+  "createdAt": "2026-11-03T03:59:44.289168430Z",
+  "source": "manual",
+  "targets": [
+    "arch-view.web.model"
+  ],
+  "title": "web.model 的 view-data 如何生成当前层数据",
+  "author": "ai",
+  "id": "web-model-view-data",
+  "commit": "7ad509ebae7c3d0cdc60e47a0b8aea8e9da7f367",
+  "body": "`view-data` 接收网页工作区 state 和当前浏览路径 path，把完整架构整理成网页当前层所需的数据。\n\n1. 调用 `projection/view-architecture` 获得当前路径的聚合图；从缓存读取规范化源码路径，并预先按当前层子节点分组成员。\n2. 把聚合节点逐个交给 `node-data`，补充模块成员、源码说明、层级、环标记和可用的复杂度数据；构建模块元数据只在根层附加。\n3. 根据这些成员的源码路径筛选相关包级架构文档。最终返回 `path`、`nodes`、排序后的 `edges` 与 `displayEdges`、`cycles` 和 `documents`。\n\n因此，网页可以沿包路径逐层浏览，同时保留成员和依赖的静态分析依据。这里负责数据适配，具体分组投影由 `arch-view.domain.architecture-projection` 完成。"
+}

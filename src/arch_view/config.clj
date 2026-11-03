@@ -62,7 +62,12 @@
                "ARCH_VIEW_PYTHON" [:python identity]
                "ARCH_VIEW_CRAP" [:crap identity]
                "ARCH_VIEW_CRAP_COMMAND" [:crap-command identity]
-               "ARCH_VIEW_OUT" [:out identity]}]
+               "ARCH_VIEW_OUT" [:out identity]
+               "ARCH_VIEW_AGENT_PROVIDER" [:agent-provider #(str/lower-case (str/trim %))]
+               "ARCH_VIEW_AGENT_COMMAND" [:agent-command identity]
+               "ARCH_VIEW_PI_COMMAND" [:pi-command identity]
+               "ARCH_VIEW_AGENT_STATE_DIR" [:agent-state-dir identity]
+               "ARCH_VIEW_AGENT_TIMEOUT" [:agent-timeout #(Long/parseLong (str/trim %))]}]
     (reduce-kv (fn [opts key [option parse]]
                  (if-let [value (get values key)]
                    (if (str/blank? value) opts (assoc opts option (parse value)))

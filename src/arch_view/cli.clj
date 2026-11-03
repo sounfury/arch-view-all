@@ -4,7 +4,7 @@
 (ns arch-view.cli
   (:require [clojure.string :as str]))
 
-(declare ^:private dispatch! ^:private normalize-project-args ^:private validate-options!
+(declare ^:private dispatch! ^:private dispatch-core! ^:private normalize-project-args ^:private validate-options!
          ^:private common-help ^:private command-help)
 
 (defn usage-summary
@@ -16,6 +16,11 @@
                  "  serve     启动网页工作台，默认自动打开浏览器\n"
                  "  desktop   启动桌面架构窗口\n"
                  "  scan      分析源码，可导出架构数据，不打开窗口\n"
+                 "  query     查询依赖、调用方、路径、环与分层（供 AI 和脚本使用）\n"
+                 "  impact    根据 git 改动列出受影响的模块\n"
+                 "  context   生成交给 AI 解释的上下文包\n"
+                 "  trace     保存并逐跳校验 AI 写的调用链路\n"
+                 "  notes     保存解释并检查是否过期\n"
                  "  help      查看帮助\n\n"
                  "不传参数时显示帮助；仅传旧分析参数时仍启动桌面窗口。\n"
                  "示例：arch-view serve .\n"
@@ -32,6 +37,14 @@
 ;; ===== 私有方法 =====
 
 (def ^:private commands #{"serve" "desktop" "scan"})
+
+;; AI 探索子命令：各自解析参数与帮助，这里只分派；值为 [入口 是否保留命令名]。
+(def ^:private extension-commands
+  {"query" [#((requiring-resolve 'arch-view.query.cli/run!) %) false]
+   "impact" [#((requiring-resolve 'arch-view.query.cli/run!) %) true]
+   "context" [#((requiring-resolve 'arch-view.context.cli/run!) %) false]
+   "trace" [#((requiring-resolve 'arch-view.trace.cli/run!) %) false]
+   "notes" [#((requiring-resolve 'arch-view.notes.cli/run!) %) false]})
 (def ^:private common-value-options #{"--project-path" "--language" "--source-path" "--in-edn"})
 (def ^:private desktop-value-options #{"--env-file" "--zoom" "--ui-scale" "--out"})
 
@@ -120,7 +133,23 @@
     "scan" (run-scan! args)
     "desktop" (apply (requiring-resolve 'arch-view.core/-main) args)))
 
+(defn- run-extension! [command args]
+  (let [[entry keep-name?] (extension-commands command)
+        exit-code (entry (vec (if keep-name? (cons command args) args)))]
+    (flush)
+    ;; 子命令可能用到 git 等子进程，主动结束后台线程，避免命令结束后进程滞留。
+    (shutdown-agents)
+    ;; 子命令返回正整数时作为退出码（如 --strict 发现问题）。
+    (when (and (integer? exit-code) (pos? exit-code)) (System/exit exit-code))))
+
 (defn- dispatch! [args]
+  (cond
+    (and (contains? extension-commands (second args)) (= "help" (first args)))
+    (run-extension! (second args) ["--help"])
+    (contains? extension-commands (first args)) (run-extension! (first args) (rest args))
+    :else (dispatch-core! args)))
+
+(defn- dispatch-core! [args]
   (if (or (nil? (first args)) (contains? #{"--help" "help"} (first args)))
     (println (usage-summary (second args)))
     (let [[command command-args] (resolve-command args)]
