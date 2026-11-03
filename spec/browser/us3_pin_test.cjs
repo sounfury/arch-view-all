@@ -167,10 +167,20 @@ test('US-3：真实 server 的全局 pin、定位、返回与项目隔离', { ti
     assert.equal(await page.locator('#hero').isVisible(), false);
     assert.equal(await page.locator('#design-notes').isVisible(), false);
     assert.ok(await page.locator('#map-world button.node').count() > 0);
+    assert.equal(await page.locator('#zoom-value').textContent(), '100%', '首次进入代码图使用可读比例，而不是适应全图');
     const pin = await visibleBounds(page, '#pinned-architecture');
     const map = await visibleBounds(page, '#map-viewport');
-    assert.ok(pin.height >= 240, '大数据流必须有独立完整画布');
-    assert.equal(overlapping(pin, map), false, '双画布不能遮挡');
+    assert.ok(pin.width >= 300 && pin.width <= 440, `浮层宽度应接近 360px，实际 ${pin.width}`);
+    assert.ok(pin.height < map.height * 0.5, '全局架构不再占主画布一半以上高度');
+    assert.ok(pin.x > map.x + map.width * 0.35, '浮层锚定在主画布右侧');
+    assert.ok(Math.abs(pin.x + pin.width - (map.x + map.width)) < 28, '浮层贴齐主画布右缘，不另占一整列');
+    assert.ok(pin.y >= map.y - 2 && pin.y < map.y + 48, '浮层从主画布顶部开始，不在工具栏外预留整行');
+    assert.equal(overlapping(pin, map), true, '浮层盖在代码图上，不再上下分屏');
+    const mapHeight = map.height;
+    await page.locator('#pin-close').click();
+    assert.ok(Math.abs((await visibleBounds(page, '#map-viewport')).height - mapHeight) < 8, '关闭浮层不应把主图高度切成上下两块');
+    await page.locator('#pin-open').click();
+    await waitForCount(page, '#pinned-architecture .pinned-node', 15);
     await screenshot(page, 'us3-default-large-flow');
   });
 
@@ -215,25 +225,28 @@ test('US-3：真实 server 的全局 pin、定位、返回与项目隔离', { ti
     assert.deepEqual(await codeCamera(page), before, '关闭重新开启pin保留代码camera');
     await page.locator('#pin-splitter').scrollIntoViewIfNeeded();
     const splitter = await visibleBounds(page, '#pin-splitter');
-    const pinHeight = (await visibleBounds(page, '#pinned-architecture')).height;
+    const pinWidth = (await visibleBounds(page, '#pinned-architecture')).width;
     await page.mouse.move(splitter.x + splitter.width / 2, splitter.y + splitter.height / 2);
     await page.mouse.down();
-    await page.mouse.move(splitter.x + splitter.width / 2, splitter.y + splitter.height / 2 + 70, { steps: 8 });
+    await page.mouse.move(splitter.x - 48, splitter.y + splitter.height / 2, { steps: 8 });
     await page.mouse.up();
     await codeCamera(page);
-    assert.ok(Math.abs((await visibleBounds(page, '#pinned-architecture')).height - pinHeight) >= 5, '实际拖动分隔条应改变pin高度');
-    assert.equal(overlapping(await visibleBounds(page, '#pinned-architecture'), await visibleBounds(page, '#map-viewport')), false);
-    assert.deepEqual(await codeCamera(page), before, '拖动分隔条保留代码camera');
+    const resized = await visibleBounds(page, '#pinned-architecture');
+    assert.ok(Math.abs(resized.width - pinWidth) >= 5, '拖动左缘应改变浮层宽度');
+    assert.ok(resized.width <= 430 && resized.width >= 310, '浮层宽度仍在可操作范围');
+    assert.equal(overlapping(resized, await visibleBounds(page, '#map-viewport')), true);
+    assert.equal(overlapping(resized, await visibleBounds(page, '#detail-panel')), false, '浮层不覆盖右侧详情');
+    assert.deepEqual(await codeCamera(page), before, '拖动浮层宽度保留代码camera');
     const beforeFullscreen = await codeCamera(page);
     await page.locator('#map-fullscreen').click();
     await page.waitForFunction(() => document.querySelector('#map-fullscreen').getAttribute('aria-pressed') === 'true');
     assert.equal(await page.locator('#pinned-architecture').isVisible(), true, '地图全屏时pin继续可见');
-    assert.equal(overlapping(await visibleBounds(page, '#pinned-architecture'), await visibleBounds(page, '#map-viewport')), false, '地图全屏时两画布不重叠');
+    assert.equal(overlapping(await visibleBounds(page, '#pinned-architecture'), await visibleBounds(page, '#detail-panel')), false, '全屏时浮层仍留在主画布内');
     await page.locator('#map-fullscreen').click();
     await page.waitForFunction(() => document.querySelector('#map-fullscreen').getAttribute('aria-pressed') === 'false');
     assert.deepEqual(await codeCamera(page), beforeFullscreen, '退出地图全屏跨帧恢复代码camera');
     assert.equal(await page.locator('#pinned-architecture').isVisible(), true);
-    assert.equal(overlapping(await visibleBounds(page, '#pinned-architecture'), await visibleBounds(page, '#map-viewport')), false);
+    assert.equal(overlapping(await visibleBounds(page, '#pinned-architecture'), await visibleBounds(page, '#map-viewport')), true, '退出全屏后仍是右上角浮层');
   });
 
   await t.test('业务节点进入包不调用叶子定位API，包级文档切换保持全局来源并支持返回', async () => {

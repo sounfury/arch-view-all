@@ -1,8 +1,22 @@
 /* US-3：独立的项目级架构 pin；图形、相机、文档及偏好不依赖主代码视图。 */
 import { parseArchitectureDocument, renderDataFlow } from './architecture_document.js';
+import { flowLayers, layoutCodeMap, parseFlowEdges } from './map_layout.js';
 
 const STORAGE_PREFIX = 'arch-view.pinned-architecture:';
+const COMPACT_CARD = { width: 92, height: 32 };
+const COMPACT_SPACING = { gapX: 10, gapY: 8, layerGap: 18, marginX: 12, marginTop: 14, marginBottom: 12, gutter: 16 };
+const PIN_WIDTH = { min: 320, max: 420, preferred: 360 };
 let componentSequence = 0;
+
+function shortLabel(label) {
+  const raw = String(label || '').trim();
+  const tail = (raw.split(/\s*[\uff1a:]\s*/).pop() || raw).replace(/\uff08[^\uff09]*\uff09/g, '').replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+  const name = tail || raw;
+  return name.length > 8 ? `${name.slice(0, 7)}\u2026` : name;
+}
+function clampWidth(value) {
+  return Math.max(PIN_WIDTH.min, Math.min(PIN_WIDTH.max, Math.round(Number(value) || PIN_WIDTH.preferred)));
+}
 
 function html(tag, className = '', text) {
   const element = document.createElement(tag);
@@ -40,6 +54,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   let camera = { x: 0, y: 0, zoom: 1 }, size = { width: 1, height: 1 };
   let splitCamera = null, drag = null, resizeDrag = null, suppressClick = false;
   let pendingFit = false, lastViewport = null, renderedKind = 'code';
+  let compactDiagram = null, fullDiagram = null, ignoreResize = 0;
   let cachedModulePaths = [];
   const cameras = new Map(), modulePathCache = new Map(), modulesByPath = new Map(), rootOwners = new Map();
 
@@ -96,8 +111,8 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   legend.append(html('span', 'pinned-current-key', '当前所在'), html('span', 'pinned-entry-key', '进入点'));
   footer.append(status, legend);
   const splitter = html('div', 'pinned-splitter'); splitter.id = 'pin-splitter'; splitter.tabIndex = 0;
-  splitter.setAttribute('role', 'separator'); splitter.setAttribute('aria-label', '调整全局架构与代码视图高度');
-  splitter.setAttribute('aria-orientation', 'horizontal'); splitter.setAttribute('aria-valuemin', '20'); splitter.setAttribute('aria-valuemax', '65');
+  splitter.setAttribute('role', 'separator'); splitter.setAttribute('aria-label', '调整全局架构浮层宽度');
+  splitter.setAttribute('aria-orientation', 'vertical'); splitter.setAttribute('aria-valuemin', String(PIN_WIDTH.min)); splitter.setAttribute('aria-valuemax', String(PIN_WIDTH.max));
   host.replaceChildren(toolbar, provenance, viewport, detail, footer, splitter);
 
   function savePreference() {
@@ -118,11 +133,88 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     if (expanded) setExpanded(false);
     opened = false; preference.closed = true; savePreference(); applyVisibility();
   }
-  function setHeight(ratio, persist = true) {
-    const height = Math.max(.2, Math.min(.65, Number(ratio) || 1 / 3));
-    host.style.setProperty('--pin-height', `${height * 100}%`);
-    splitter.setAttribute('aria-valuenow', String(Math.round(height * 100)));
-    if (persist) { preference.height = height; savePreference(); }
+  function setWidth(px, persist = true) {
+    const width = clampWidth(px);
+    preference.width = width;
+    delete preference.height;
+    host.style.setProperty('--pin-width', `${width}px`);
+    splitter.setAttribute('aria-valuenow', String(width));
+    if (persist) savePreference();
+    layoutFrame();
+  }
+  function layoutFrame() {
+    if (expanded) return;
+    const bounds = host.parentElement?.getBoundingClientRect();
+    if (!bounds?.width || !bounds?.height) return;
+    const width = clampWidth(preference.width || PIN_WIDTH.preferred);
+    const maxHeight = bounds.height / 3;
+    const cramped = bounds.width < 560 || bounds.height < 320 || maxHeight < 150;
+    host.classList.toggle('pinned-cramped', cramped);
+    if (cramped) {
+      host.style.setProperty('--pin-width', 'auto');
+      host.style.setProperty('--pin-height', 'auto');
+      return;
+    }
+    const usable = Math.min(width, Math.max(160, bounds.width - 16));
+    const height = Math.max(168, Math.min(maxHeight, Math.round(usable * 0.78)));
+    host.style.setProperty('--pin-width', `${Math.round(usable)}px`);
+    host.style.setProperty('--pin-height', `${Math.round(height)}px`);
+  }
+  function buildCompact(items, edges, layered) {
+    const layers = layered ? null : flowLayers(items.map(item => item.id), edges);
+    const layout = layoutCodeMap({
+      nodes: items.map(item => ({ id: item.id, layer: layered ? Number(item.layer) || 0 : layers.get(item.id) || 0 })),
+      edges,
+      viewport: { width: Math.max(280, clampWidth(preference.width || PIN_WIDTH.preferred) - 28), height: 188 },
+      card: COMPACT_CARD,
+      spacing: COMPACT_SPACING,
+    });
+    const diagram = svg('svg', { viewBox: `0 0 ${layout.width} ${layout.height}`, width: layout.width, height: layout.height, class: 'pinned-compact-diagram' });
+    diagram.__size = { width: layout.width, height: layout.height };
+    const markerId = `pin-compact-arrow-${instance}`;
+    const defs = svg('defs');
+    const marker = svg('marker', { id: markerId, markerWidth: 8, markerHeight: 8, refX: 7, refY: 4, orient: 'auto', markerUnits: 'userSpaceOnUse' });
+    marker.append(svg('path', { d: 'M0 0 L8 4 L0 8 Z', fill: '#91a89b' }));
+    defs.append(marker); diagram.append(defs);
+    for (const route of layout.routes) {
+      const path = svg('path', { d: route.d, class: 'pinned-edge', 'data-from': route.from, 'data-to': route.to, 'marker-end': `url(#${markerId})` });
+      const caption = route.label || (route.count > 1 ? String(route.count) : '');
+      if (caption) path.append(svg('title', {}, caption));
+      diagram.append(path);
+    }
+    const elements = new Map();
+    for (const position of layout.positions) {
+      const item = items.find(node => node.id === position.id);
+      const full = item?.label || position.id;
+      const group = svg('g', { transform: `translate(${position.x},${position.y})` });
+      group.append(svg('title', {}, full));
+      group.append(svg('rect', { width: COMPACT_CARD.width, height: COMPACT_CARD.height, rx: 6 }));
+      group.append(svg('text', { x: 8, y: 21, class: 'pinned-compact-label' }, shortLabel(full)));
+      diagram.append(group);
+      elements.set(position.id, group);
+    }
+    return { diagram, elements };
+  }
+  function diagramSize(diagram) {
+    if (diagram?.__size) return diagram.__size;
+    const bounds = diagram?.viewBox?.baseVal;
+    return { width: Math.max(1, bounds?.width || Number(diagram?.getAttribute('width')) || 1), height: Math.max(1, bounds?.height || Number(diagram?.getAttribute('height')) || 1) };
+  }
+  function mountActiveDiagram() {
+    const diagram = !expanded && compactDiagram ? compactDiagram : fullDiagram;
+    if (!diagram) return;
+    const compact = diagram === compactDiagram;
+    host.classList.toggle('pinned-compact', compact);
+    for (const node of nodes) node.element = (compact ? node.compactElement : node.fullElement) || node.fullElement || node.element;
+    size = diagramSize(diagram);
+    diagram.style.maxWidth = 'none';
+    diagram.setAttribute('width', String(size.width)); diagram.setAttribute('height', String(size.height));
+    world.replaceChildren(diagram); world.style.width = `${size.width}px`; world.style.height = `${size.height}px`;
+  }
+  function settleCamera() {
+    if (cameras.has(activeKey) && !expanded) { camera = { ...cameras.get(activeKey) }; pendingFit = false; applyCamera(); return; }
+    if (!expanded && compactDiagram) { camera = { zoom: 1, x: 12, y: 8 }; pendingFit = false; applyCamera(); return; }
+    pendingFit = true; if (opened) fit();
   }
   function modulePath(module) {
     if (!modulePathCache.has(module)) modulePathCache.set(module, parts(module).slice(Number(project?.namespaceRootDepth) || 0).join('/'));
@@ -177,7 +269,8 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     } else if (activeKey && !expanded) cameras.set(activeKey, { ...camera });
     if (expanded) setExpanded(false);
     opened = preference.closed !== true;
-    setHeight(preference.height, false); applyVisibility();
+    delete preference.height;
+    setWidth(preference.width, false); applyVisibility();
     flows = []; nodes = []; selectedNode = null; documentError = ''; drawingError = ''; loading = true;
     world.replaceChildren(); showDetail(); showNotice(); updateControls();
     // 只读取项目文档；包级文档切换没有进入此组件的通道。
@@ -203,6 +296,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     ++navigationVersion;
     if (activeKey && !expanded) cameras.set(activeKey, { ...camera });
     activeKey = nextKey; nodes = []; selectedNode = null; drawingError = ''; loading = true;
+    compactDiagram = null; fullDiagram = null;
     world.replaceChildren(); showDetail(); showNotice();
     let diagram;
     try {
@@ -221,6 +315,14 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
             summary: roles.map(role => role.summary).filter(Boolean).join('；') };
         });
         for (const edge of diagram.querySelectorAll('.edgePaths path')) edge.classList.add('pinned-edge');
+        fullDiagram = diagram; compactDiagram = null;
+        for (const node of nodes) node.fullElement = node.element;
+        const parsed = parseFlowEdges(flow.source, nodes.map(node => node.id));
+        if (parsed) {
+          const compact = buildCompact(nodes.map(node => ({ id: node.id, label: node.label })), parsed, false);
+          compactDiagram = compact.diagram;
+          for (const node of nodes) node.compactElement = compact.elements.get(node.id) || null;
+        }
         provenance.textContent = `${flow.path} · 项目级文档数据流 · 保留全部节点与连线`;
       } else {
         ({ diagram, nodes } = renderRootGraph());
@@ -233,15 +335,13 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
       provenance.textContent = '源码静态分析 · 数据流绘制失败，暂用根层代码架构';
     }
     if (version !== renderVersion || expectedLoad !== loadVersion) return;
-    const bounds = diagram.viewBox.baseVal;
-    size = { width: Math.max(1, bounds.width), height: Math.max(1, bounds.height) };
-    diagram.style.maxWidth = 'none'; diagram.setAttribute('width', String(size.width)); diagram.setAttribute('height', String(size.height));
-    diagram.setAttribute('aria-label', source.value === 'flow' && !drawingError ? '钉住的项目数据流图' : '钉住的根层代码架构图');
+    if (!fullDiagram) fullDiagram = diagram;
+    for (const node of nodes) if (!node.fullElement) node.fullElement = node.element;
+    (fullDiagram || diagram).setAttribute('aria-label', source.value === 'flow' && !drawingError ? '钉住的项目数据流图' : '钉住的根层代码架构图');
     for (const node of nodes) bindNode(node);
-    world.replaceChildren(diagram); world.style.width = `${size.width}px`; world.style.height = `${size.height}px`;
+    mountActiveDiagram();
     loading = false;
-    if (cameras.has(activeKey)) { camera = { ...cameras.get(activeKey) }; pendingFit = false; applyCamera(); }
-    else { pendingFit = true; if (opened) fit(); }
+    settleCamera();
     updateHighlight(); showNotice();
   }
   function renderRootGraph() {
@@ -299,10 +399,21 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
       return { id: node.id, label, element, scopes: [], targets, chosenTarget: resolved?.key || '',
         summary: node.description || `${node.members?.length || 0} 个源码模块 · 根层代码边界` };
     });
+    fullDiagram = diagram;
+    for (const node of graphNodes) node.fullElement = node.element;
+    const compact = buildCompact(rootNodes.map(node => ({ id: node.id, label: node.label || node.id, layer: node.layer })),
+      (rootView?.edges || []).map(edge => ({ from: edge.from, to: edge.to, count: edge.count || 0, label: edge.label || (edge.count > 1 ? String(edge.count) : '') })), true);
+    compactDiagram = compact.diagram;
+    for (const node of graphNodes) node.compactElement = compact.elements.get(node.id) || null;
     return { diagram, nodes: graphNodes };
   }
   function bindNode(node) {
-    const element = node.element;
+    const elements = [...new Set([node.fullElement, node.compactElement, node.element].filter(Boolean))];
+    for (const element of elements) bindElement(node, element);
+  }
+  function bindElement(node, element) {
+    if (element.dataset.pinBound) return;
+    element.dataset.pinBound = '1';
     element.classList.add('pinned-node'); element.classList.toggle('pinned-unbound', !node.targets.length);
     element.dataset.nodeId = node.id;
     element.dataset.targets = JSON.stringify(node.targets.map(target => target.target));
@@ -453,22 +564,28 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     camera.y += bounds.top + bounds.height / 2 - (top + bottom) / 2; applyCamera(); return true;
   }
   function focusCurrent() { centerElements(nodes.filter(node => node.element.classList.contains('pinned-current')).map(node => node.element)); }
+  function setInert(element, active) {
+    if (active) { element.dataset.pinWasInert = String(element.inert); element.inert = true; }
+    else { element.inert = element.dataset.pinWasInert === 'true'; delete element.dataset.pinWasInert; }
+  }
   function setExpanded(active) {
     if (active === expanded || (active && !opened)) return;
+    ignoreResize += 1;
     expanded = active;
     if (active) splitCamera = { ...camera };
     panel?.classList.toggle('pin-expanded', active); host.classList.toggle('pinned-expanded', active);
-    expandButton.textContent = active ? '返回分屏' : '放大阅读'; expandButton.title = active ? '返回分屏（Esc）' : '放大阅读全局架构';
+    expandButton.textContent = active ? '退出放大' : '放大阅读'; expandButton.title = active ? '退出放大（Esc）' : '放大阅读全局架构';
     expandButton.setAttribute('aria-label', expandButton.title); expandButton.setAttribute('aria-expanded', String(active));
-    // 保留下方 DOM 和相机；仅阻止放大图背后的控件获得键盘焦点。
-    for (const sibling of panel?.children || []) if (sibling !== host) {
-      if (active) { sibling.dataset.pinWasInert = String(sibling.inert); sibling.inert = true; }
-      else { sibling.inert = sibling.dataset.pinWasInert === 'true'; delete sibling.dataset.pinWasInert; }
-    }
+    // 浮层在画布容器内，不能把容器本身设为 inert，否则放大后的控件也无法聚焦。
+    const stage = host.parentElement;
+    for (const sibling of panel?.children || []) if (sibling !== stage && sibling !== host) setInert(sibling, active);
+    if (stage) for (const child of stage.children) if (child !== host) setInert(child, active);
+    mountActiveDiagram(); updateHighlight();
     lastViewport = null;
-    if (!active && splitCamera) { camera = splitCamera; splitCamera = null; applyCamera(); }
+    if (!active && splitCamera) { camera = splitCamera; splitCamera = null; pendingFit = false; applyCamera(); }
     requestAnimationFrame(() => {
       if (expanded !== active) return;
+      layoutFrame();
       if (active) {
         fit(); zoomAt(Math.max(.8, camera.zoom));
         if (!centerElements(nodes.filter(node => node.element.classList.contains('pinned-current')).map(node => node.element))) {
@@ -477,6 +594,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
         }
       }
       lastViewport = { width: viewport.clientWidth, height: viewport.clientHeight };
+      ignoreResize = Math.max(0, ignoreResize - 1);
     });
     expandButton.focus({ preventScroll: true });
   }
@@ -530,26 +648,24 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     else if (event.key === '-') { event.preventDefault(); zoomAt(camera.zoom / 1.25); }
   });
   splitter.addEventListener('pointerdown', event => {
-    if (event.button !== 0 || expanded) return;
-    event.preventDefault(); resizeDrag = { id: event.pointerId, top: host.getBoundingClientRect().top };
+    if (event.button !== 0 || expanded || host.classList.contains('pinned-cramped')) return;
+    event.preventDefault(); resizeDrag = { id: event.pointerId, right: host.getBoundingClientRect().right };
     splitter.setPointerCapture(event.pointerId); host.classList.add('pinned-resizing');
   });
   splitter.addEventListener('pointermove', event => {
-    if (!resizeDrag || event.pointerId !== resizeDrag.id || !panel) return;
-    const maximum = Math.max(200, panel.clientHeight - 310);
-    const height = Math.max(200, Math.min(maximum, event.clientY - resizeDrag.top));
-    setHeight(height / panel.clientHeight, false);
+    if (!resizeDrag || event.pointerId !== resizeDrag.id) return;
+    setWidth(resizeDrag.right - event.clientX, false);
   });
   function finishResize(event) {
     if (!resizeDrag || event.pointerId !== resizeDrag.id) return;
     resizeDrag = null; host.classList.remove('pinned-resizing');
     if (splitter.hasPointerCapture(event.pointerId)) splitter.releasePointerCapture(event.pointerId);
-    preference.height = Number(splitter.getAttribute('aria-valuenow')) / 100; savePreference();
+    savePreference();
   }
   splitter.addEventListener('pointerup', finishResize); splitter.addEventListener('pointercancel', finishResize);
   splitter.addEventListener('keydown', event => {
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-    event.preventDefault(); setHeight(Number(splitter.getAttribute('aria-valuenow')) / 100 + (event.key === 'ArrowDown' ? .03 : -.03));
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault(); setWidth(Number(splitter.getAttribute('aria-valuenow')) + (event.key === 'ArrowLeft' ? 16 : -16));
   });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && expanded && !document.querySelector('#drawer:not([hidden])')) {
@@ -559,12 +675,14 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   if (globalThis.ResizeObserver) {
     new ResizeObserver(() => {
       const width = viewport.clientWidth, height = viewport.clientHeight;
-      if (!width || !height) return;
+      if (!width || !height || ignoreResize) { if (width && height) lastViewport = { width, height }; return; }
+      layoutFrame();
+      const nextWidth = viewport.clientWidth, nextHeight = viewport.clientHeight;
       if (pendingFit && nodes.length) fit();
-      else if (lastViewport) { camera.x += (width - lastViewport.width) / 2; camera.y += (height - lastViewport.height) / 2; applyCamera(); }
-      lastViewport = { width, height };
+      else if (lastViewport) { camera.x += (nextWidth - lastViewport.width) / 2; camera.y += (nextHeight - lastViewport.height) / 2; applyCamera(); }
+      lastViewport = { width: nextWidth, height: nextHeight };
     }).observe(viewport);
   }
-  setHeight(1 / 3, false); applyVisibility(); showNotice();
+  setWidth(PIN_WIDTH.preferred, false); applyVisibility(); showNotice();
   return { load, updateLocation, isOpen: () => opened, open, close };
 }

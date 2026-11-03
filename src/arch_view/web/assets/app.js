@@ -8,15 +8,15 @@
 import { parseArchitectureDocument, renderDataFlow, uncoveredModules } from './architecture_document.js';
 import { createExploration } from './exploration.js';
 import { createPinnedArchitecture } from './pinned_architecture.js';
+import { CARD, layoutCodeMap, routeEdge as layoutRouteEdge, scrollToReveal } from './map_layout.js';
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const CARD = { width: 240, height: 144, stride: 272, row: 178 };
 const state = { project: null, view: null, rootView: null, path: [], selected: null, document: null,
-  sections: [], roles: new Map(), flowRoles: new Map(), zoom: 1, world: { width: 800, height: 400 }, mode: 'explore',
+  sections: [], roles: new Map(), flowRoles: new Map(), zoom: 1, world: { width: 800, height: 400, routeWidth: 800 }, mode: 'explore',
   request: 0, documentRequest: 0, sourceRequest: 0, cyclesOnly: false, positions: new Map(),
   flows: [], flowIndex: 0, diagramKind: 'code', mapRequest: 0, flowNodes: [], selectedFlow: null, documentBase: [],
   returnTrail: [], coverageDocument: null, uncovered: new Set(), pendingFlowSelection: null, hovered: null,
-  pan: { x: 0, y: 0 }, fullscreenCamera: null, restoreCamera: null,
+  pan: { x: 0, y: 0 }, fullscreenCamera: null, restoreCamera: null, levelCameras: new Map(),
   navigationView: null, navigationPath: [], sourceModule: null,
   treeExpanded: new Set(), treeViews: new Map(), treeErrors: new Map(), treeLoading: new Set(),
   complexity: { status: 'unavailable' }, showComplexity: localStorage.getItem('arch-view.show-complexity') !== 'off' };
@@ -265,7 +265,7 @@ function showOverview() {
 }
 function showExplore() {
   setMode('explore');
-  requestAnimationFrame(() => { if (state.view) { fitMap(); if (state.selected && state.diagramKind === 'code') focusSelectedNode(); } });
+  requestAnimationFrame(() => { if (state.view) { presentCurrentMap(); if (state.selected && state.diagramKind === 'code') focusSelectedNode(); } });
 }
 async function expandSinglePackages(view, path, request) {
   // 连续的单子包没有需要选择的分支，直接展开；源码文件保留在图中。
@@ -312,7 +312,7 @@ async function navigate(path, mode = 'explore', selectedId = null, { expand = tr
     $('#metric-groups').textContent = view.nodes.length;
     $('#metric-cycles').textContent = view.cycles.length;
     $('#cycle-filter').classList.toggle('has-cycles', view.cycles.length > 0);
-    renderCoverage(); renderBreadcrumbs(); renderRootNav(); renderMap(); renderDetail(); renderCycles(); fitMap();
+    renderCoverage(); renderBreadcrumbs(); renderRootNav(); renderMap(); renderDetail(); renderCycles(); presentCurrentMap();
     $('#analysis-state').textContent = state.diagramKind === 'flow' ? '文档数据流' : '源码静态依赖';
     const local = path.map((_, index) => path.slice(0, index + 1)).reverse()
       .map(scope => ({ path: scope, doc: view.documents.find(doc => doc.directory.endsWith(scope.join('/').replace(/-/g, '_'))) }))
@@ -574,60 +574,30 @@ function scrollIntoMap(target) {
   if (box.left >= view.left && box.right <= view.right && box.top >= view.top && box.bottom <= view.bottom) return;
   viewport.scrollBy({ left: box.left + box.width / 2 - (view.left + view.width / 2), top: box.top + box.height / 2 - (view.top + view.height / 2) });
 }
-function positionsFor(nodes) {
-  // 根视图和内部视图都按实际依赖层排布，左右留出跨层连线通道。
-  const groups = new Map();
-  nodes.forEach(node => { if (!groups.has(node.layer)) groups.set(node.layer, []); groups.get(node.layer).push(node); });
-  const columns = Math.max(1, Math.min(canvasColumns(), Math.max(0, ...[...groups.values()].map(g => g.length))));
-  const width = columns * CARD.stride + 80; const positions = new Map(); let y = 50;
-  [...groups.entries()].sort((a, b) => a[0] - b[0]).forEach(([layer, group]) => {
-    const rows = Math.ceil(group.length / columns);
-    group.forEach((node, index) => {
-      const row = Math.floor(index / columns); const rowCount = Math.min(columns, group.length - row * columns);
-      const x = (width - (rowCount * CARD.stride - 32)) / 2 + (index % columns) * CARD.stride;
-      positions.set(node.id, { x, y: y + row * CARD.row, layer });
-    }); y += rows * CARD.row + 48;
-  }); return { positions, width, height: Math.max(300, y - 35) };
+let layoutKey = '';
+let layoutColumns = null;
+function layoutIdentity(nodes) {
+  return `${state.path.join('/')}|${nodes.map(node => node.id).join('|')}`;
 }
-function roundedRoute(points) {
-  let d = `M${points[0][0]},${points[0][1]}`;
-  for (let index = 1; index < points.length - 1; index++) {
-    const previous = points[index - 1], corner = points[index], next = points[index + 1];
-    const before = Math.hypot(corner[0] - previous[0], corner[1] - previous[1]);
-    const after = Math.hypot(next[0] - corner[0], next[1] - corner[1]);
-    const radius = Math.min(8, before / 2, after / 2);
-    if (!before || !after) continue;
-    const x1 = corner[0] + (previous[0] - corner[0]) * radius / before;
-    const y1 = corner[1] + (previous[1] - corner[1]) * radius / before;
-    const x2 = corner[0] + (next[0] - corner[0]) * radius / after;
-    const y2 = corner[1] + (next[1] - corner[1]) * radius / after;
-    d += ` L${x1},${y1} Q${corner[0]},${corner[1]} ${x2},${y2}`;
-  }
-  return d + ` L${points.at(-1)[0]},${points.at(-1)[1]}`;
+function layoutFor(nodes, edges) {
+  // 根视图和内部视图都按依赖层排布；列数随画布宽度选择，几像素变化不改列。
+  const viewport = $('#map-viewport');
+  const key = layoutIdentity(nodes);
+  const layout = layoutCodeMap({
+    nodes: nodes.map(node => ({ id: node.id, layer: node.layer })),
+    edges,
+    viewport: { width: Math.max(320, viewport.clientWidth || 960), height: Math.max(240, viewport.clientHeight || 640) },
+    previousColumns: key === layoutKey ? layoutColumns : null,
+  });
+  layoutKey = key;
+  layoutColumns = layout.columns;
+  return {
+    positions: new Map(layout.positions.map(position => [position.id, position])),
+    width: layout.width, height: layout.height, routeWidth: layout.routeWidth, columns: layout.columns,
+  };
 }
 function routeEdge(from, to, width, index) {
-  const sx = from.x + CARD.width / 2, tx = to.x + CARD.width / 2, lane = (index % 4) * 4;
-  if (from.y === to.y) {
-    const right = to.x > from.x;
-    if (Math.abs(to.x - from.x) <= CARD.stride) {
-      const start = from.x + (right ? CARD.width : 0), end = to.x + (right ? -3 : CARD.width + 3), y = from.y + CARD.height / 2;
-      return { d: `M${start},${y} L${end},${y}`, x: (start + end) / 2, y: y - 8 };
-    }
-    const y = from.y - 16 - lane;
-    return { d: roundedRoute([[sx, from.y], [sx, y], [tx, y], [tx, to.y - 3]]), x: (sx + tx) / 2, y: y - 5 };
-  }
-  const down = to.y > from.y, sy = from.y + (down ? CARD.height : 0), ty = to.y + (down ? -3 : CARD.height + 3);
-  const exit = sy + (down ? 14 + lane : -14 - lane), entry = ty + (down ? -14 - lane : 14 + lane);
-  if (Math.abs(to.y - from.y) <= CARD.row + 48) {
-    const middle = (sy + ty) / 2;
-    return { d: roundedRoute([[sx, sy], [sx, middle], [tx, middle], [tx, ty]]), x: (sx + tx) / 2 + 6, y: middle - 5 };
-  }
-  const gutter = (sx + tx) / 2 < width / 2 ? 14 + lane : width - 14 - lane;
-  return { d: roundedRoute([[sx, sy], [sx, exit], [gutter, exit], [gutter, entry], [tx, entry], [tx, ty]]), x: gutter + 6, y: (exit + entry) / 2 };
-}
-function canvasColumns() {
-  const width = $('#map-viewport').clientWidth;
-  return width < 480 ? 1 : width < 650 ? 2 : 3;
+  return layoutRouteEdge(from, to, state.world?.routeWidth || width, index);
 }
 function svgElement(tag, attributes = {}) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -642,9 +612,10 @@ function renderMap() {
   world.classList.remove('flow-world');
   const nodes = exploration.mapNodes(visibleNodes(state.view));
   $('#metric-groups').textContent = nodes.length;
-  const layout = positionsFor(nodes); state.world = layout; state.positions = layout.positions;
+  const layout = layoutFor(nodes, state.view.edges || []); state.world = layout; state.positions = layout.positions;
+  world.dataset.columns = String(layout.columns);
   world.style.width = `${layout.width}px`; world.style.height = `${layout.height}px`;
-  if (!nodes.length) { world.append(element('p', 'map-empty', state.view.nodes.length ? '当前范围的源码未在架构文档里提到，请先补充文档。' : '当前范围没有源码模块。可返回上层，或检查启动时指定的源码目录。')); return; }
+  if (!nodes.length) { world.append(element('p', 'map-empty', state.view.nodes.length ? '当前范围的源码未在架构文档里提到，请先补充文档。' : '当前范围没有源码模块。可返回上层，或检查启动时指定的源码目录。')); applyZoom(); return; }
   const svg = svgElement('svg', { width: layout.width, height: layout.height, 'aria-hidden': 'true' });
   const defs = svgElement('defs');
   for (const [id, color] of [['arrow', '#a7b99b'], ['arrow-active', '#26664e'], ['arrow-incoming', '#c36a3e']]) {
@@ -680,6 +651,7 @@ function renderMap() {
   }
   exploration.decorateMap(world, layout.positions, nodes);
   applyHighlight();
+  applyZoom();
 }
 
 function statusBadge(status) {
@@ -981,19 +953,41 @@ async function locatePinnedTarget(target) {
   return false;
 }
 
+function pinOcclusion() {
+  const pin = $('#pinned-architecture');
+  const panel = pin?.closest('.map-panel');
+  if (!pin || pin.hidden || panel?.classList.contains('pin-expanded')) return null;
+  const view = $('#map-viewport').getBoundingClientRect();
+  const box = pin.getBoundingClientRect();
+  const left = Math.max(view.left, box.left), right = Math.min(view.right, box.right);
+  const top = Math.max(view.top, box.top), bottom = Math.min(view.bottom, box.bottom);
+  if (right - left < 8 || bottom - top < 8) return null;
+  return { left, top, right, bottom };
+}
+function nudgeMap(dx, dy) {
+  if (!dx && !dy) return;
+  const viewport = $('#map-viewport');
+  const maxLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+  const maxTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+  const nextLeft = Math.min(maxLeft, Math.max(0, viewport.scrollLeft + dx));
+  const nextTop = Math.min(maxTop, Math.max(0, viewport.scrollTop + dy));
+  const usedX = nextLeft - viewport.scrollLeft, usedY = nextTop - viewport.scrollTop;
+  viewport.scrollLeft = nextLeft; viewport.scrollTop = nextTop;
+  const restX = dx - usedX, restY = dy - usedY;
+  if (Math.abs(restX) > 0.5 || Math.abs(restY) > 0.5) {
+    state.pan.x -= restX; state.pan.y -= restY; applyZoom();
+  }
+}
 function focusSelectedNode() {
   const card = $$('button.node').find(el => el.dataset.node === state.selected?.id);
   if (!card) return;
-  const position = state.positions.get(state.selected.id), viewport = $('#map-viewport');
-  const cardBox = card.getBoundingClientRect(), viewBox = viewport.getBoundingClientRect();
-  const visible = cardBox.left >= viewBox.left && cardBox.right <= viewBox.right && cardBox.top >= viewBox.top && cardBox.bottom <= viewBox.bottom;
-  // 保留居中用的平移，只在卡片超出视野时滚动过去，避免选中后整张图跳回左上角。
-  if (position && !visible) viewport.scrollTo({
-    left: Math.max(0, state.pan.x + (position.x + CARD.width / 2) * state.zoom - viewport.clientWidth / 2),
-    top: Math.max(0, state.pan.y + (position.y + CARD.height / 2) * state.zoom - viewport.clientHeight / 2)
-  });
+  const viewport = $('#map-viewport');
+  // 只把浮层矩形当遮挡，卡片仍可经过其余区域；滚动不够时再平移。
+  const delta = scrollToReveal(card.getBoundingClientRect(), viewport.getBoundingClientRect(), pinOcclusion(), 16);
+  nudgeMap(delta.dx, delta.dy);
   card.focus({ preventScroll: true });
   mainCamera = captureMapCamera();
+  rememberLevelCamera();
 }
 function enterNode(node) {
   if (node.leaf) showSource(node.sourceModule);
@@ -1140,7 +1134,26 @@ function applyZoom() {
   $('#zoom-value').textContent = `${Math.round(state.zoom * 100)}%`;
   mainCamera = captureMapCamera();
 }
-function zoomBy(delta) { state.zoom = Math.min(1.8, Math.max(.15, state.zoom + delta)); applyZoom(); }
+function rememberLevelCamera() {
+  if (!state.view || state.diagramKind !== 'code') return;
+  state.levelCameras.set(state.path.join('/'), captureMapCamera());
+}
+function zoomBy(delta) { state.zoom = Math.min(1.8, Math.max(.15, state.zoom + delta)); applyZoom(); rememberLevelCamera(); }
+function readableMap() {
+  state.zoom = 1; state.pan = { x: 0, y: 0 }; applyZoom();
+  const viewport = $('#map-viewport');
+  const width = state.world.width * state.zoom, height = state.world.height * state.zoom;
+  state.pan = { x: Math.max(0, (viewport.clientWidth - width) / 2), y: Math.max(0, (viewport.clientHeight - height) / 2) };
+  applyZoom();
+  viewport.scrollTo(width > viewport.clientWidth ? Math.max(0, (width - viewport.clientWidth) / 2) : 0, 0);
+  mainCamera = captureMapCamera(); rememberLevelCamera();
+}
+function presentCurrentMap() {
+  if (state.diagramKind === 'flow') { fitMap(); return; }
+  const saved = state.levelCameras.get(state.path.join('/'));
+  if (saved) restoreMapCamera(saved);
+  else readableMap();
+}
 function fitMap() {
   state.pan = { x: 0, y: 0 };
   applyZoom();
@@ -1156,7 +1169,7 @@ function fitMap() {
   applyZoom();
   // 小图通过平移居中；受最小缩放限制的大图滚动到中心。
   viewport.scrollTo(Math.max(0, (width - viewport.clientWidth) / 2), Math.max(0, (height - viewport.clientHeight) / 2));
-  mainCamera = captureMapCamera();
+  mainCamera = captureMapCamera(); rememberLevelCamera();
 }
 
 function captureMapCamera() {
@@ -1166,7 +1179,7 @@ function captureMapCamera() {
 function restoreMapCamera(camera) {
   state.zoom = camera.zoom; state.pan = { ...camera.pan }; applyZoom();
   $('#map-viewport').scrollTo(camera.left, camera.top);
-  mainCamera = { ...camera, pan: { ...camera.pan } };
+  mainCamera = { ...camera, pan: { ...camera.pan } }; rememberLevelCamera();
 }
 
 function setMapFullscreen(active) {
@@ -1205,6 +1218,7 @@ function endCanvasDrag(event) {
   if (!canvasDrag || canvasDrag.id !== event.pointerId) return;
   canvasDrag = null; const viewport = $('#map-viewport'); viewport.classList.remove('dragging');
   if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
+  rememberLevelCamera();
 }
 let drawerReturnFocus;
 function openDrawer(title, path, kind) {
@@ -1307,7 +1321,7 @@ $('#document-open').addEventListener('click', () => showDocument());
 $('#search').addEventListener('input', applyHighlight);
 for (const [id, kind] of [['code-view', 'code'], ['flow-view', 'flow']]) $('#' + id).addEventListener('click', () => {
   state.diagramKind = kind; state.selected = null; state.selectedFlow = null; state.cyclesOnly = false;
-  $('#cycle-filter').classList.remove('active'); renderMap(); renderDetail(); renderRootNav(); fitMap(); updatePinnedLocation();
+  $('#cycle-filter').classList.remove('active'); renderMap(); renderDetail(); renderRootNav(); presentCurrentMap(); updatePinnedLocation();
 });
 $('#flow-select').addEventListener('change', event => { state.flowIndex = Number(event.target.value); state.selectedFlow = null; renderMap(); renderDetail(); });
 $('#show-edges').addEventListener('change', applyHighlight);
@@ -1316,6 +1330,7 @@ $('#complexity-toggle').addEventListener('click', toggleComplexity);
 $('#map-back').addEventListener('click', navigateUp);
 $('#map-return').addEventListener('click', returnBack);
 $('#zoom-in').addEventListener('click', () => zoomBy(.1)); $('#zoom-out').addEventListener('click', () => zoomBy(-.1)); $('#zoom-fit').addEventListener('click', fitMap);
+$('#zoom-value').addEventListener('click', () => { readableMap(); if (state.selected && state.diagramKind === 'code') focusSelectedNode(); });
 $('#map-fullscreen').addEventListener('click', toggleMapFullscreen);
 $('#pin-open').addEventListener('click', () => pinnedArchitecture.open());
 $('#map-viewport').addEventListener('pointerdown', beginCanvasDrag);
@@ -1323,7 +1338,7 @@ $('#map-viewport').addEventListener('pointermove', moveCanvasDrag);
 $('#map-viewport').addEventListener('scroll', () => {
   const bounds = $('#map-viewport').getBoundingClientRect();
   // 浏览器会在尺寸改变时夹紧 scroll；先让 ResizeObserver 恢复改变前的 camera。
-  if (bounds.width === observedViewportWidth && bounds.height === observedViewportHeight) mainCamera = captureMapCamera();
+  if (bounds.width === observedViewportWidth && bounds.height === observedViewportHeight) { mainCamera = captureMapCamera(); rememberLevelCamera(); }
 });
 for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) $('#map-viewport').addEventListener(event, endCanvasDrag);
 $('#map-viewport').addEventListener('wheel', event => { if (event.ctrlKey || event.metaKey) { event.preventDefault(); zoomBy(event.deltaY < 0 ? .05 : -.05); } }, { passive: false });
@@ -1346,25 +1361,34 @@ let observedFullscreen = false;
 new ResizeObserver(() => {
   if (!state.view) return;
   const viewport = $('#map-viewport'), bounds = viewport.getBoundingClientRect();
-  // pin 放大时主画布可能被隐藏；恢复分屏后仍使用原来的布局和 camera。
+  // pin 放大时主画布可能被隐藏；恢复后仍使用原来的布局和 camera。
   if (!bounds.width || !bounds.height) return;
   const fullscreen = $('.view-grid').classList.contains('is-fullscreen');
   const fullscreenChanged = fullscreen !== observedFullscreen;
-  if (bounds.width === observedViewportWidth && bounds.height === observedViewportHeight && !fullscreenChanged) return;
-  const camera = mainCamera || captureMapCamera();
-  observedViewportWidth = bounds.width; observedViewportHeight = bounds.height; observedFullscreen = fullscreen;
-  if (fullscreenChanged) {
-    if (state.diagramKind === 'code') renderMap();
-    if (state.restoreCamera) { restoreMapCamera(state.restoreCamera); state.restoreCamera = null; }
-    else { fitMap(); if (state.selected && state.diagramKind === 'code') focusSelectedNode(); }
-  } else {
-    // pin 开关、拖分隔条只改变可见空间；不重排节点、不重新适应画布。
-    restoreMapCamera(camera);
+  const widthDelta = Math.abs(bounds.width - observedViewportWidth), heightDelta = Math.abs(bounds.height - observedViewportHeight);
+  if (!fullscreenChanged && widthDelta < 16 && heightDelta < 16) {
+    observedViewportWidth = bounds.width; observedViewportHeight = bounds.height; return;
   }
+  const camera = mainCamera || captureMapCamera();
+  const previousColumns = layoutColumns;
+  observedViewportWidth = bounds.width; observedViewportHeight = bounds.height; observedFullscreen = fullscreen;
+  if (state.diagramKind === 'code') {
+    const nodes = exploration.mapNodes(visibleNodes(state.view));
+    const preview = layoutCodeMap({
+      nodes: nodes.map(node => ({ id: node.id, layer: node.layer })),
+      edges: state.view.edges || [],
+      viewport: { width: bounds.width, height: bounds.height },
+      previousColumns: layoutIdentity(nodes) === layoutKey ? layoutColumns : null,
+    });
+    if (fullscreenChanged || preview.columns !== previousColumns) renderMap();
+  }
+  if (fullscreenChanged && state.restoreCamera) { restoreMapCamera(state.restoreCamera); state.restoreCamera = null; }
+  else restoreMapCamera(camera);
+  if (state.selected && state.diagramKind === 'code' && (fullscreenChanged || layoutColumns !== previousColumns)) focusSelectedNode();
 }).observe($('#map-viewport'));
 // AI 辅助探索（解释、上下文包、调用链路）放在独立模块，只借用这里的页面能力。
 const exploration = createExploration({
-  state, api, element, button, icon, richText, toast, openDrawer, showSource, navigate, fitMap, routeEdge, svgElement, $,
+  state, api, element, button, icon, richText, toast, openDrawer, showSource, navigate, fitMap, presentMap: presentCurrentMap, routeEdge, svgElement, $,
   focusModule: module => {
     const node = state.view?.nodes.find(item => item.members.includes(module));
     if (node) { selectNode(node.id); focusSelectedNode(); }

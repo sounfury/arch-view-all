@@ -73,7 +73,7 @@ export function createExploration(host) {
     panel.replaceChildren(element('div', 'eyebrow', '调用链路'), element('h3', '', data.title));
     const close = button('关闭链路', 'button small', closeTrace);
     const scope = button(trace.only ? '显示全部模块' : '只看链路模块', 'button small', () => {
-      trace.only = !trace.only; host.refresh(); host.fitMap();
+      trace.only = !trace.only; host.refresh(); host.presentMap();
     });
     const actions = element('div', 'ai-actions'); actions.append(close, scope); panel.append(actions);
     if (data.question) panel.append(element('p', 'trace-question', data.question));
@@ -141,7 +141,7 @@ export function createExploration(host) {
   }
 
   function closeTrace() {
-    trace.active = null; trace.step = null; renderTraceNav(); host.refresh(); host.fitMap();
+    trace.active = null; trace.step = null; renderTraceNav(); host.refresh(); host.presentMap();
   }
 
   async function focusStep(index) {
