@@ -121,6 +121,13 @@ async function shownPinEdges(page) {
       incoming: edge.classList.contains('pinned-edge-incoming'), outgoing: edge.classList.contains('pinned-edge-outgoing') })));
 }
 
+async function pinLabelPixels(page, id = 'rpc') {
+  return page.locator(`#pin-world .pinned-node[data-node-id="${id}"] text`).first().evaluate(text => {
+    const transform = text.getScreenCTM();
+    return Number.parseFloat(getComputedStyle(text).fontSize) * Math.hypot(transform.a, transform.b);
+  });
+}
+
 async function pinCurrent(page, id) {
   await page.locator(`.pinned-node[data-node-id="${id}"].pinned-current`).waitFor();
 }
@@ -258,8 +265,15 @@ test('US-3：真实 server 的全局 pin、点击导航、缩放与项目隔离'
     await page.locator('#pin-zoom-in').click();
     assert.notEqual(await page.locator('#pin-world').evaluate(world => world.style.transform), pinBefore);
     assert.deepEqual(await codeCamera(page), before, 'pin缩放不应改变代码camera');
+    while (Number.parseInt(await page.locator('#pin-zoom-value').textContent()) < 150) await page.locator('#pin-zoom-in').click();
+    const compactLabelPixels = await pinLabelPixels(page);
+    const compactCamera = await page.locator('#pin-world').evaluate(world => world.style.transform);
     await page.locator('#pin-expand').click();
     await page.waitForFunction(() => document.querySelector('#pin-expand').getAttribute('aria-expanded') === 'true');
+    await codeCamera(page);
+    const readingLabelPixels = await pinLabelPixels(page);
+    assert.ok(readingLabelPixels >= 17.9, `阅读态文字至少18px，实际${readingLabelPixels}`);
+    assert.ok(readingLabelPixels > compactLabelPixels * 1.4, `放大阅读要实际放大文字：${compactLabelPixels} -> ${readingLabelPixels}`);
     const pin = await visibleBounds(page, '#pinned-architecture');
     for (const selector of ['#pin-source', '#pin-fit', '#pin-expand', '#pin-close']) {
       const bounds = await visibleBounds(page, selector);
@@ -270,6 +284,8 @@ test('US-3：真实 server 的全局 pin、点击导航、缩放与项目隔离'
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.querySelector('#pin-expand').getAttribute('aria-expanded') === 'false');
     assert.deepEqual(await codeCamera(page), before, '退出放大阅读后跨下一帧仍保留代码camera');
+    assert.equal(await page.locator('#pin-world').evaluate(world => world.style.transform), compactCamera, '退出阅读恢复浮层原缩放和平移');
+    assert.ok(Math.abs(await pinLabelPixels(page) - compactLabelPixels) < .1, '退出阅读恢复原屏幕字号');
     await page.locator('#pin-close').click();
     assert.equal(await page.locator('#pinned-architecture').isVisible(), false);
     await page.locator('#pin-open').click();
@@ -306,12 +322,15 @@ test('US-3：真实 server 的全局 pin、点击导航、缩放与项目隔离'
     const original = await visibleBounds(page, '#pinned-architecture');
     const before = await codeCamera(page);
     const corner = await visibleBounds(page, '#pin-resize-corner');
+    const labelPixelsBefore = await pinLabelPixels(page);
     const x = corner.x + corner.width / 2, y = corner.y + corner.height / 2;
     await page.mouse.move(x, y); await page.mouse.down();
     await page.mouse.move(x - 260, y + 190, { steps: 12 }); await page.mouse.up();
     const enlarged = await visibleBounds(page, '#pinned-architecture');
     assert.ok(enlarged.width >= original.width + 240, '左下角向左拖可以超过原来的420px宽度限制');
     assert.ok(enlarged.height >= original.height + 170, '左下角向下拖增加浮层高度');
+    const labelPixelsAfter = await pinLabelPixels(page);
+    assert.ok(labelPixelsAfter > labelPixelsBefore * 1.25, `角拖动必须同时放大图形文字：${labelPixelsBefore} -> ${labelPixelsAfter}`);
     assert.ok(Math.abs(enlarged.x + enlarged.width - original.x - original.width) < 2, '右上角保持锚定');
     assert.ok(Math.abs(enlarged.y - original.y) < 2);
     assert.deepEqual(await codeCamera(page), before, '调整浮层宽高不改变主图相机');
@@ -461,6 +480,10 @@ test('US-3：真实 server 的全局 pin、点击导航、缩放与项目隔离'
     assert.equal(await page.locator('#pin-source').inputValue(), 'code');
     assert.equal(await page.locator('#pin-source option[value="flow"]').isDisabled(), true);
     assert.equal(await page.locator('#pinned-architecture').isVisible(), true);
+    await page.locator('#pin-expand').click();
+    await codeCamera(page);
+    assert.ok(await pinLabelPixels(page, 'rpc') >= 17.9, '根代码图阅读态也应达到可读字号');
+    await page.keyboard.press('Escape');
   });
 
   await t.test('项目文档请求故障回退代码图，重试恢复真实大数据流且主图可用', async () => {

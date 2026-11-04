@@ -649,8 +649,27 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     if (active) { element.dataset.pinWasInert = String(element.inert); element.inert = true; }
     else { element.inert = element.dataset.pinWasInert === 'true'; delete element.dataset.pinWasInert; }
   }
+  function nodeFontSize() {
+    const text = nodes.map(node => node.element?.querySelector('text')).find(Boolean);
+    return Number.parseFloat(text ? getComputedStyle(text).fontSize : '') || 16;
+  }
+  function expandForReading(previousFontSize) {
+    const font = nodeFontSize();
+    // 阅读态保证文字至少 18px，并比进入前的屏幕文字大一半；大图允许平移阅读。
+    const minimum = Math.max(18, previousFontSize * 1.5) / font;
+    const fitted = Math.min((viewport.clientWidth - 32) / size.width, (viewport.clientHeight - 24) / size.height);
+    camera = { x: 0, y: 0, zoom: Math.min(4, Math.max(minimum, Math.min(2, fitted))) };
+    pendingFit = false;
+    applyCamera();
+    if (!centerElements(nodes.filter(node => node.element.classList.contains('pinned-current')).map(node => node.element))) {
+      camera.x = (viewport.clientWidth - size.width * camera.zoom) / 2;
+      camera.y = (viewport.clientHeight - size.height * camera.zoom) / 2;
+      applyCamera();
+    }
+  }
   function setExpanded(active) {
     if (active === expanded || (active && !opened)) return;
+    const previousFontSize = nodeFontSize() * camera.zoom;
     ignoreResize += 1;
     expanded = active; previewNode = null;
     if (active) { splitCamera = { ...camera }; showAllEdges = false; }
@@ -666,15 +685,9 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     lastViewport = null;
     if (!active && splitCamera) { camera = splitCamera; splitCamera = null; pendingFit = false; applyCamera(); }
     requestAnimationFrame(() => {
-      if (expanded !== active) return;
+      if (expanded !== active) { ignoreResize = Math.max(0, ignoreResize - 1); return; }
       layoutFrame();
-      if (active) {
-        fit(); zoomAt(Math.max(.8, camera.zoom));
-        if (!centerElements(nodes.filter(node => node.element.classList.contains('pinned-current')).map(node => node.element))) {
-          camera.x = (viewport.clientWidth - size.width * camera.zoom) / 2;
-          camera.y = (viewport.clientHeight - size.height * camera.zoom) / 2; applyCamera();
-        }
-      }
+      if (active) expandForReading(previousFontSize);
       lastViewport = { width: viewport.clientWidth, height: viewport.clientHeight };
       ignoreResize = Math.max(0, ignoreResize - 1);
     });
@@ -734,7 +747,8 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     event.preventDefault(); event.stopPropagation();
     const bounds = host.getBoundingClientRect();
     resizeDrag = { id: event.pointerId, width: bounds.width, height: bounds.height,
-      x: event.clientX, y: event.clientY, corner: event.currentTarget === corner, handle: event.currentTarget };
+      x: event.clientX, y: event.clientY, corner: event.currentTarget === corner, handle: event.currentTarget,
+      viewport: { width: viewport.clientWidth, height: viewport.clientHeight }, camera: { ...camera } };
     event.currentTarget.setPointerCapture(event.pointerId); host.classList.add('pinned-resizing');
   }
   function moveResize(event) {
@@ -744,6 +758,17 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     if (resizeDrag.corner) preference.floatingHeight = Math.min(limits.height,
       Math.max(PIN_HEIGHT_MIN, resizeDrag.height + event.clientY - resizeDrag.y));
     layoutFrame();
+    if (resizeDrag.corner && nodes.length) {
+      const start = resizeDrag.viewport, before = resizeDrag.camera;
+      const width = viewport.clientWidth, height = viewport.clientHeight;
+      const factor = Math.min(width / Math.max(1, start.width), height / Math.max(1, start.height));
+      const zoom = Math.min(4, Math.max(.005, before.zoom * factor));
+      const ratio = zoom / before.zoom;
+      camera = { zoom, x: width / 2 - (start.width / 2 - before.x) * ratio,
+        y: height / 2 - (start.height / 2 - before.y) * ratio };
+      pendingFit = false; applyCamera();
+      lastViewport = { width, height };
+    }
   }
   function finishResize(event) {
     if (!resizeDrag || event.pointerId !== resizeDrag.id) return;
@@ -783,6 +808,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
       if (!width || !height || ignoreResize) { if (width && height) lastViewport = { width, height }; return; }
       layoutFrame();
       const nextWidth = viewport.clientWidth, nextHeight = viewport.clientHeight;
+      if (resizeDrag?.corner) { lastViewport = { width: nextWidth, height: nextHeight }; return; }
       if (pendingFit && nodes.length) fit();
       else if (lastViewport) { camera.x += (nextWidth - lastViewport.width) / 2; camera.y += (nextHeight - lastViewport.height) / 2; applyCamera(); }
       lastViewport = { width: nextWidth, height: nextHeight };
