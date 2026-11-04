@@ -1,6 +1,7 @@
 /* US-3：独立的项目级架构 pin；图形、相机、文档及偏好不依赖主代码视图。 */
 import { parseArchitectureDocument, renderDataFlow } from './architecture_document.js';
-import { flowLayers, layoutCodeMap, parseFlowEdges } from './map_layout.js';
+import { flowLayers, parseFlowEdges } from './map_layout.js';
+import { layoutPinnedGraph } from './pin_layout.js';
 
 const STORAGE_PREFIX = 'arch-view.pinned-architecture:';
 const COMPACT_CARD = { width: 92, height: 32 };
@@ -50,6 +51,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   let project = null, rootView = null, preference = {}, opened = true, expanded = false;
   let loadVersion = 0, renderVersion = 0, navigationVersion = 0;
   let flows = [], nodes = [], activeKey = '', selectedNode = null, entry = null;
+  let previewNode = null, showAllEdges = false;
   let location = { path: [], selected: null, sourceModule: null };
   let documentError = '', drawingError = '', loading = false;
   let camera = { x: 0, y: 0, zoom: 1 }, size = { width: 1, height: 1 };
@@ -78,6 +80,10 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   control('pin-zoom-in', '放大全局架构', () => zoomAt(camera.zoom * 1.25), '+');
   const fitButton = control('pin-fit', '适应完整图', () => fit(), '适应');
   const locateButton = control('pin-locate', '定位当前代码', () => focusCurrent(), '定位当前');
+  const edgeModeButton = control('pin-edge-mode', '显示全部连线', () => {
+    showAllEdges = !showAllEdges; updateHighlight();
+  }, '全部连线');
+  edgeModeButton.hidden = true; edgeModeButton.setAttribute('aria-pressed', 'false');
   const expandButton = control('pin-expand', '放大阅读全局架构', () => setExpanded(!expanded), '放大阅读');
   expandButton.setAttribute('aria-expanded', 'false');
   control('pin-close', '关闭全局架构', () => close(), '关闭');
@@ -91,6 +97,10 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   const retry = html('button', 'pinned-button', '重试'); retry.id = 'pin-retry'; retry.type = 'button';
   retry.addEventListener('click', () => { if (project) void load(project, rootView); });
   notice.append(message, retry); viewport.append(world, notice);
+  const relationLegend = html('span', 'pinned-relation-legend'); relationLegend.id = 'pin-relation-legend';
+  relationLegend.append(html('span', 'pinned-upstream-key', '上游'), html('span', 'pinned-downstream-key', '下游'));
+  const edgeHint = html('span', 'pinned-edge-hint', '悬停节点查看上下游'); edgeHint.id = 'pin-edge-hint';
+  viewport.append(relationLegend, edgeHint);
   const detail = html('div', 'pinned-detail'); detail.id = 'pin-detail';
   const copy = html('div', 'pinned-detail-copy');
   const detailTitle = html('strong', 'pinned-detail-title', '点击模块进入代码'); detailTitle.id = 'pin-detail-title';
@@ -160,10 +170,10 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   }
   function buildCompact(items, edges, layered) {
     const layers = layered ? null : flowLayers(items.map(item => item.id), edges);
-    const layout = layoutCodeMap({
+    const layout = layoutPinnedGraph({
       nodes: items.map(item => ({ id: item.id, layer: layered ? Number(item.layer) || 0 : layers.get(item.id) || 0 })),
       edges,
-      viewport: { width: Math.max(280, clampWidth(preference.width || PIN_WIDTH.preferred) - 28), height: 188 },
+      viewport: { width: viewport.clientWidth || Math.max(1, clampWidth(preference.width || PIN_WIDTH.preferred) - 2), height: viewport.clientHeight || 188 },
       card: COMPACT_CARD,
       spacing: COMPACT_SPACING,
     });
@@ -175,7 +185,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     marker.append(svg('path', { d: 'M0 0 L8 4 L0 8 Z', fill: '#91a89b' }));
     defs.append(marker); diagram.append(defs);
     for (const route of layout.routes) {
-      const path = svg('path', { d: route.d, class: 'pinned-edge', 'data-from': route.from, 'data-to': route.to, 'marker-end': `url(#${markerId})` });
+      const path = svg('path', { d: route.d, class: `pinned-edge${route.backward ? ' pinned-edge-backward' : ''}`, 'data-from': route.from, 'data-to': route.to, 'marker-end': `url(#${markerId})` });
       const caption = route.label || (route.count > 1 ? String(route.count) : '');
       if (caption) path.append(svg('title', {}, caption));
       diagram.append(path);
@@ -293,7 +303,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     const version = ++renderVersion, nextKey = sourceKey();
     ++navigationVersion;
     if (activeKey && !expanded) cameras.set(activeKey, { ...camera });
-    activeKey = nextKey; nodes = []; selectedNode = null; drawingError = ''; loading = true;
+    activeKey = nextKey; nodes = []; selectedNode = null; previewNode = null; drawingError = ''; loading = true;
     compactDiagram = null; fullDiagram = null;
     world.replaceChildren(); showDetail(); showNotice();
     let diagram;
@@ -321,7 +331,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
           compactDiagram = compact.diagram;
           for (const node of nodes) node.compactElement = compact.elements.get(node.id) || null;
         }
-        provenance.textContent = `${flow.path} · 项目级文档数据流 · 保留全部节点与连线`;
+        provenance.textContent = `${flow.path} · 项目级文档数据流`;
       } else {
         ({ diagram, nodes } = renderRootGraph());
         provenance.textContent = '源码静态分析 · 原始根层代码架构';
@@ -337,6 +347,8 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     for (const node of nodes) if (!node.fullElement) node.fullElement = node.element;
     (fullDiagram || diagram).setAttribute('aria-label', source.value === 'flow' && !drawingError ? '钉住的项目数据流图' : '钉住的根层代码架构图');
     for (const node of nodes) bindNode(node);
+    indexDiagramEdges(fullDiagram);
+    indexDiagramEdges(compactDiagram);
     mountActiveDiagram();
     loading = false;
     settleCamera();
@@ -376,7 +388,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
       }
       diagram.append(svg('path', { d, class: 'pinned-edge', 'data-from': edge.from, 'data-to': edge.to, 'marker-end': `url(#${markerId})` }));
       const label = edge.label || (edge.count > 1 ? String(edge.count) : '');
-      if (label) diagram.append(svg('text', { x: labelX, y: labelY, class: 'pinned-edge-label', 'text-anchor': 'middle' }, label));
+      if (label) diagram.append(svg('text', { x: labelX, y: labelY, class: 'pinned-edge-label', 'text-anchor': 'middle', 'data-from': edge.from, 'data-to': edge.to }, label));
     });
     const graphNodes = rootNodes.map(node => {
       const position = positions.get(node.id), element = svg('g', { transform: `translate(${position.x},${position.y})` });
@@ -409,6 +421,79 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     const elements = [...new Set([node.fullElement, node.compactElement, node.element].filter(Boolean))];
     for (const element of elements) bindElement(node, element);
   }
+  function indexDiagramEdges(diagram) {
+    if (!diagram) return;
+    // Mermaid 的边 ID 包含端点；只接受无歧义的匹配，特殊语法仍保留原图。
+    const nodeIds = new Set(nodes.map(node => node.id));
+    const endpoints = id => {
+      if (!id?.startsWith('L_')) return null;
+      const body = id.slice(2).replace(/_\d+$/, '');
+      const candidates = nodes.filter(node => body.startsWith(node.id + '_') && nodeIds.has(body.slice(node.id.length + 1)));
+      return candidates.length === 1 ? { from: candidates[0].id, to: body.slice(candidates[0].id.length + 1) } : null;
+    };
+    const edgeIds = new Map();
+    const edges = [...diagram.querySelectorAll('.pinned-edge')];
+    for (const edge of edges) {
+      const id = edge.getAttribute('data-id');
+      const pair = edge.dataset.from ? null : endpoints(id);
+      if (!edge.dataset.from && pair) { edge.dataset.from = pair.from; edge.dataset.to = pair.to; }
+      if (id) edgeIds.set(id, edge);
+      edge.dataset.pinArrow = edge.getAttribute('marker-end') || '';
+    }
+    const labels = [...diagram.querySelectorAll('.edgeLabel,.pinned-edge-label')];
+    for (const label of labels) {
+      const edge = edgeIds.get(label.querySelector('[data-id]')?.getAttribute('data-id'));
+      if (edge) { label.dataset.from = edge.dataset.from; label.dataset.to = edge.dataset.to; }
+    }
+    diagram.__pinEdges = edges; diagram.__pinLabels = labels;
+    diagram.__pinFocusSupported = edges.every(edge => edge.dataset.from && edge.dataset.to);
+    const markerPrefix = `pin-focus-${instance}-${renderVersion}-${diagram === compactDiagram ? 'compact' : 'full'}`;
+    let defs = diagram.querySelector('defs');
+    if (!defs) { defs = svg('defs'); diagram.prepend(defs); }
+    for (const [direction, color] of [['incoming', '#bc713d'], ['outgoing', '#287350'], ['neutral', '#9bb3a2']]) {
+      const marker = svg('marker', { id: `${markerPrefix}-${direction}`, markerWidth: 8, markerHeight: 8,
+        refX: 7, refY: 4, orient: 'auto', markerUnits: 'userSpaceOnUse' });
+      marker.append(svg('path', { d: 'M0 0 L8 4 L0 8 Z', fill: color })); defs.append(marker);
+    }
+    diagram.__pinMarkerPrefix = markerPrefix;
+  }
+  function updateEdgeFocus(current) {
+    const diagram = world.querySelector('svg');
+    if (!diagram) return;
+    const edges = diagram.__pinEdges || [], labels = diagram.__pinLabels || [];
+    const supported = diagram.__pinFocusSupported === true;
+    const focus = previewNode ? new Set([previewNode.id]) : current.size ? current :
+      selectedNode ? new Set([selectedNode.id]) : new Set();
+    const all = (expanded && showAllEdges) || !supported;
+    const neighbors = new Set(focus);
+    for (const edge of edges) {
+      const { from, to } = edge.dataset;
+      const outgoing = focus.has(from), incoming = focus.has(to);
+      const related = outgoing || incoming;
+      if (related) { neighbors.add(from); neighbors.add(to); }
+      edge.style.display = all || related ? '' : 'none';
+      edge.classList.toggle('pinned-edge-incoming', incoming && !outgoing);
+      edge.classList.toggle('pinned-edge-outgoing', outgoing);
+      // 标准箭头跟随连线颜色；特殊 Mermaid 箭头仍保留原始形状。
+      const arrow = edge.dataset.pinArrow || '';
+      if (arrow && (!arrow.includes('flowchart') || arrow.includes('pointEnd'))) {
+        edge.setAttribute('marker-end', `url(#${diagram.__pinMarkerPrefix}-${outgoing ? 'outgoing' : incoming ? 'incoming' : 'neutral'})`);
+      }
+    }
+    for (const label of labels) label.style.display = expanded && (all || focus.has(label.dataset.from) || focus.has(label.dataset.to)) ? '' : 'none';
+    for (const node of nodes) {
+      node.element.classList.toggle('pinned-focus-node', focus.has(node.id));
+      node.element.classList.toggle('pinned-context', supported && !all && focus.size > 0 && !neighbors.has(node.id));
+    }
+    edgeModeButton.disabled = !supported;
+    edgeModeButton.setAttribute('aria-pressed', String(showAllEdges && expanded));
+    edgeModeButton.classList.toggle('active', showAllEdges && expanded);
+    edgeModeButton.title = supported ? '显示全部连线；关闭后仅显示直接上下游' : '此图保留原始连线展示';
+    relationLegend.hidden = all || !focus.size;
+    edgeHint.hidden = all || focus.size > 0;
+    host.dataset.edgeMode = all ? 'all' : 'adjacent';
+    host.dataset.edgeFocus = [...focus].join(',');
+  }
   function bindElement(node, element) {
     if (element.dataset.pinBound) return;
     element.dataset.pinBound = '1';
@@ -423,6 +508,12 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
       void enterNode(node);
     });
     element.addEventListener('dblclick', event => event.stopPropagation());
+    for (const type of ['pointerenter', 'focus']) element.addEventListener(type, () => {
+      previewNode = node; updateHighlight();
+    });
+    for (const type of ['pointerleave', 'blur']) element.addEventListener(type, () => {
+      if (previewNode === node) { previewNode = null; updateHighlight(); }
+    });
     element.addEventListener('keydown', event => {
       if (event.key === ' ' || event.key === 'Enter') {
         event.preventDefault(); event.stopPropagation();
@@ -503,6 +594,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
       if (current.has(node.id)) node.element.setAttribute('aria-current', 'location');
       else node.element.removeAttribute('aria-current');
     }
+    updateEdgeFocus(current);
     locateButton.disabled = !current.size;
     const currentNames = nodes.filter(node => current.has(node.id)).map(node => node.label);
     const enteredNames = nodes.filter(node => entered.has(node.id)).map(node => node.label);
@@ -518,6 +610,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     updateHighlight();
   }
   function showNotice() {
+    if (loading || !nodes.length) { relationLegend.hidden = true; edgeHint.hidden = true; }
     const warning = drawingError || documentError;
     notice.hidden = !loading && !warning && nodes.length > 0;
     notice.classList.toggle('pinned-warning', Boolean(warning) && !loading);
@@ -559,8 +652,9 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   function setExpanded(active) {
     if (active === expanded || (active && !opened)) return;
     ignoreResize += 1;
-    expanded = active;
-    if (active) splitCamera = { ...camera };
+    expanded = active; previewNode = null;
+    if (active) { splitCamera = { ...camera }; showAllEdges = false; }
+    edgeModeButton.hidden = !active;
     panel?.classList.toggle('pin-expanded', active); host.classList.toggle('pinned-expanded', active);
     expandButton.textContent = active ? '退出放大' : '放大阅读'; expandButton.title = active ? '退出放大（Esc）' : '放大阅读全局架构';
     expandButton.setAttribute('aria-label', expandButton.title); expandButton.setAttribute('aria-expanded', String(active));

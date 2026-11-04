@@ -114,6 +114,13 @@ async function codeCamera(page) {
   }));
 }
 
+async function shownPinEdges(page) {
+  return page.locator('#pin-world .pinned-edge').evaluateAll(edges => edges
+    .filter(edge => getComputedStyle(edge).display !== 'none')
+    .map(edge => ({ from: edge.dataset.from, to: edge.dataset.to,
+      incoming: edge.classList.contains('pinned-edge-incoming'), outgoing: edge.classList.contains('pinned-edge-outgoing') })));
+}
+
 async function pinCurrent(page, id) {
   await page.locator(`.pinned-node[data-node-id="${id}"].pinned-current`).waitFor();
 }
@@ -184,6 +191,48 @@ test('US-3：真实 server 的全局 pin、点击导航、缩放与项目隔离'
     await page.locator('#pin-open').click();
     await waitForCount(page, '#pinned-architecture .pinned-node', 15);
     await screenshot(page, 'us3-default-large-flow');
+  });
+
+  await t.test('浮层仅展示直接上下游，悬停和键盘预览不导航，放大可查看全部连线', async () => {
+    await page.locator('#pin-fit').click();
+    const camera = await codeCamera(page);
+    const shape = await page.locator('#pin-world svg').getAttribute('viewBox');
+    const positions = await page.locator('#pin-world .pinned-node').evaluateAll(nodes => nodes.map(node => node.getAttribute('transform')));
+    assert.deepEqual(await shownPinEdges(page), [], '项目根层未聚焦时不显示缠绕连线');
+    assert.equal(await page.locator('#pin-edge-hint').isVisible(), true);
+    await page.locator('.pinned-node[data-node-id="rpc"]').hover();
+    const rpcEdges = await shownPinEdges(page);
+    assert.equal(rpcEdges.length, 7);
+    assert.ok(rpcEdges.every(edge => edge.from === 'rpc' || edge.to === 'rpc'), '只展示直接连线，不递归展开整条链路');
+    assert.equal(rpcEdges.filter(edge => edge.incoming).length, 1);
+    assert.equal(rpcEdges.filter(edge => edge.outgoing).length, 6);
+    assert.equal(await page.locator('#pin-relation-legend').isVisible(), true);
+    await page.locator('.pinned-node[data-node-id="mq"]').hover();
+    const mqEdges = await shownPinEdges(page);
+    assert.equal(mqEdges.length, 4);
+    assert.ok(mqEdges.every(edge => edge.from === 'mq' || edge.to === 'mq'));
+    assert.deepEqual(await page.locator('#breadcrumbs button').allTextContents(), ['项目'], '悬停不会进入代码');
+    await page.locator('#pin-fit').hover();
+    assert.deepEqual(await shownPinEdges(page), []);
+    await page.locator('.pinned-node[data-node-id="rpc"]').focus();
+    assert.equal((await shownPinEdges(page)).length, 7, '键盘聚焦也可预览');
+    await page.locator('#pin-expand').click();
+    assert.equal(await page.locator('#pin-edge-mode').isVisible(), true);
+    await page.locator('#pin-edge-mode').click();
+    assert.equal(await page.locator('#pin-edge-mode').getAttribute('aria-pressed'), 'true');
+    assert.equal((await shownPinEdges(page)).length, 24, '完整阅读仍能检查所有真实关系');
+    assert.equal(await page.locator('#pin-world .pinned-node').count(), 15);
+    assert.equal(await page.locator('#pin-world .edgeLabel').evaluateAll(labels => labels.filter(label => getComputedStyle(label).display !== 'none').length), 24);
+    await screenshot(page, 'us3-all-edges');
+    await page.locator('#pin-edge-mode').click();
+    await page.locator('.pinned-node[data-node-id="rpc"]').hover();
+    assert.equal((await shownPinEdges(page)).length, 7, '完整图也能切回聚焦阅读');
+    await page.keyboard.press('Escape');
+    await page.locator('#pin-fit').hover();
+    assert.deepEqual(await shownPinEdges(page), []);
+    assert.equal(await page.locator('#pin-world svg').getAttribute('viewBox'), shape);
+    assert.deepEqual(await page.locator('#pin-world .pinned-node').evaluateAll(nodes => nodes.map(node => node.getAttribute('transform'))), positions, '预览不重排节点');
+    assert.deepEqual(await codeCamera(page), camera, '预览和查看全部连线不改变代码图相机');
   });
 
   await t.test('总览页才显示规模卡片和架构说明，探索页只保留地图', async () => {
@@ -266,7 +315,11 @@ test('US-3：真实 server 的全局 pin、点击导航、缩放与项目隔离'
     assert.ok(Math.abs(enlarged.x + enlarged.width - original.x - original.width) < 2, '右上角保持锚定');
     assert.ok(Math.abs(enlarged.y - original.y) < 2);
     assert.deepEqual(await codeCamera(page), before, '调整浮层宽高不改变主图相机');
+    await page.locator('#pin-fit').click();
+    await page.locator('.pinned-node[data-node-id="rpc"]').hover();
     await screenshot(page, 'us3-corner-resized');
+    const artifactDirectory = process.env.US3_ARTIFACT_DIR || path.join(repository, 'tmp/us3-artifacts');
+    await page.locator('#pinned-architecture').screenshot({ path: path.join(artifactDirectory, 'us3-rpc-preview-resized.png') });
     await page.locator('#pin-close').click(); await page.locator('#pin-open').click();
     const reopened = await visibleBounds(page, '#pinned-architecture');
     assert.ok(Math.abs(reopened.width - enlarged.width) < 2 && Math.abs(reopened.height - enlarged.height) < 2);
@@ -301,6 +354,13 @@ test('US-3：真实 server 的全局 pin、点击导航、缩放与项目隔离'
     await page.waitForFunction(() => document.querySelector('#document-select').value.includes('rpc/ARCHITECTURE.md'));
     await pinCurrent(page, 'rpc');
     await page.locator('.pinned-node[data-node-id="rpc"].pinned-entry').waitFor();
+    await page.locator('#pin-fit').hover();
+    assert.equal((await shownPinEdges(page)).length, 7, '离开悬停后恢复当前模块的直接连线');
+    await page.locator('.pinned-node[data-node-id="mq"]').hover();
+    assert.equal((await shownPinEdges(page)).length, 4);
+    await page.locator('#pin-fit').hover();
+    assert.equal((await shownPinEdges(page)).length, 7, '临时预览不会覆盖代码当前位置');
+    await screenshot(page, 'us3-rpc-focused');
     assert.equal(await page.locator('#pin-world svg').getAttribute('id'), globalSvg, '包级文档不应重绘全局数据流');
     assert.ok((await page.locator('#pin-provenance').textContent()).startsWith('ARCHITECTURE.md'));
     assert.equal(await page.locator('#pinned-architecture .pinned-node').count(), 15);

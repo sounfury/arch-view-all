@@ -176,6 +176,7 @@
    "/pinned_architecture.js" ["pinned_architecture.js" "text/javascript; charset=utf-8"]
    "/exploration.js" ["exploration.js" "text/javascript; charset=utf-8"]
    "/map_layout.js" ["map_layout.js" "text/javascript; charset=utf-8"]
+   "/pin_layout.js" ["pin_layout.js" "text/javascript; charset=utf-8"]
    "/tree_prefix.js" ["tree_prefix.js" "text/javascript; charset=utf-8"]
    "/vendor/mermaid.min.js" ["vendor/mermaid.min.js" "text/javascript; charset=utf-8"]
    "/vendor/marked.umd.js" ["vendor/marked.umd.js" "text/javascript; charset=utf-8"]
