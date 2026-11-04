@@ -42,7 +42,7 @@
        "  show <id>                  查看链路及当前逐跳证据\n"
        "  verify [<id>|--all] [--fix-moved] [--strict]\n"
        "                             不传 id 时校验全部；--fix-moved 保存移动后的行号\n"
-       "                             --strict 遇到 stale、missing、unverified 时退出码为 2\n\n"
+       "                             --strict 遇到 stale、missing、unverified 或虚线关系时退出码为 2\n\n"
        (cli-support/common-help)
        "\n最小草稿 JSON（行号从 1 起，路径相对项目根）：\n"
        "{\"id\":\"example\",\"title\":\"示例链路\",\"steps\":[{\"title\":\"入口\","
@@ -114,21 +114,24 @@
 (def ^:private hop-icons
   {"direct" "✓" "indirect" "≈" "reverse" "↩" "unverified" "?" "unmapped" "·" "same-module" "="})
 
-(defn- hop-markdown [{:keys [from to fromModule toModule status path]}]
+(defn- hop-markdown [{:keys [from to fromModule toModule status path reason uncertain]}]
   (str "- " (inc from) " → " (inc to) "：" (get hop-icons status) " " status
        "（" (or fromModule "未映射") " → " (or toModule "未映射") "）"
-       (when (= "indirect" status) (str "；路径：" (str/join " → " path)))))
+       (when (= "indirect" status) (str "；路径：" (str/join " → " path)))
+       (when uncertain (str "；虚线：" reason))))
 
 (defn- summary-markdown [summary]
   (str "锚点 " (str/join "、" (map #(str (name %) " " (get summary % 0)) [:fresh :moved :stale :missing]))
        "；跳转 " (str/join "、" (map #(str (name %) " " (get summary % 0))
-                                   [:same-module :direct :indirect :reverse :unverified :unmapped]))))
+                                   [:same-module :direct :indirect :reverse :unverified :unmapped]))
+       (when (:uncertain summary) (str "；不确定关系 " (:uncertain summary)))))
 
-(defn- next-steps [{:keys [moved stale missing unverified]}]
+(defn- next-steps [{:keys [moved stale missing unverified uncertain] :or {uncertain 0}}]
   (let [advice (cond-> []
                  (pos? (+ stale missing)) (conj (str "有 " (+ stale missing) " 处锚点过期或缺失，请检查源码并重新保存链路"))
                  (pos? moved) (conj (str "有 " moved " 处锚点移动，可用 verify --fix-moved 更新行号"))
-                 (pos? unverified) (conj (str "有 " unverified " 跳缺少静态证据，请人工复核")))]
+                 (pos? unverified) (conj (str "有 " unverified " 跳缺少静态证据，请人工复核"))
+                 (pos? uncertain) (conj (str "有 " uncertain " 条多实现、异步或动态关系，虚线原因已保留，请对照源码复核")))]
     (if (seq advice) (str/join "；" advice) "锚点有效，静态证据校验通过；可在网页查看链路。")))
 
 (defn- list-markdown [entries]

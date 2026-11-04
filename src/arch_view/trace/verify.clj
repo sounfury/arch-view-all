@@ -24,7 +24,13 @@
   (let [steps (mapv #(check-step ws %1 %2) (range) (:steps trace))
         edges (into #{} (map (juxt :from :to)) (get-in ws [:architecture :graph :edges]))
         adjacency (reduce (fn [m [from to]] (update m from (fnil conj #{}) to)) {} edges)
-        hops (mapv #(check-hop edges adjacency %1 %2) steps (rest steps))
+        hops (if (contains? trace :edges)
+               (mapv (fn [{:keys [from to style reason]}]
+                       (cond-> (check-hop edges adjacency (nth steps from) (nth steps to))
+                         style (assoc :style style)
+                         reason (assoc :reason reason)
+                         (= style "dashed") (assoc :uncertain true))) (:edges trace))
+               (mapv #(check-hop edges adjacency %1 %2) steps (rest steps)))
         summary (summarize steps hops)]
     {:trace trace :steps steps :hops hops :summary summary :verdict (verdict summary)}))
 
@@ -84,10 +90,11 @@
   (merge (zipmap [:fresh :moved :stale :missing :same-module :direct :indirect :reverse :unverified :unmapped]
                  (repeat 0))
          (frequencies (map #(keyword (get-in % [:anchor :status])) steps))
-         (frequencies (map #(keyword (:status %)) hops))))
+         (frequencies (map #(keyword (:status %)) hops))
+         (when (some :uncertain hops) {:uncertain (count (filter :uncertain hops))})))
 
-(defn- verdict [{:keys [stale missing unverified]}]
+(defn- verdict [{:keys [stale missing unverified uncertain] :or {uncertain 0}}]
   (cond
     (pos? (+ stale missing)) "stale"
-    (pos? unverified) "needs-review"
+    (pos? (+ unverified uncertain)) "needs-review"
     :else "ok"))

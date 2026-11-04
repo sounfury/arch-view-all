@@ -81,11 +81,16 @@ export function createExploration(host) {
     if (data.summary) panel.append(richText(data.summary, 'trace-summary'));
     const list = element('ol', 'trace-steps');
     steps.forEach((step, index) => {
-      if (index > 0) list.append(hopItem(hops[index - 1]));
+      const incoming = data.edges ? hops.filter(hop => hop.to === index) : index > 0 ? [hops[index - 1]] : [];
+      for (const hop of incoming) {
+        const line = hopItem(hop);
+        if (data.edges) line.prepend(element('small', '', `步骤 ${hop.from + 1} → ${index + 1} `));
+        list.append(line);
+      }
       list.append(stepItem(data.steps[index] || {}, step, index));
     });
     panel.append(list, element('p', 'detail-provenance', '校验只核对模块依赖；函数调用顺序仍需对照源码。'), element('p', 'detail-provenance',
-      `${data.author === 'human' ? '人工整理' : 'AI 整理'} · ${formatDate(data.createdAt)}${data.commit ? ' · 提交 ' + data.commit.slice(0, 8) : ''} · 逐跳结果来自当前源码静态分析`));
+      `${data.author === 'human' ? '人工整理' : data.author === 'static' ? '源码静态分析生成' : 'AI 整理'} · ${formatDate(data.createdAt)}${data.commit ? ' · 提交 ' + data.commit.slice(0, 8) : ''} · 逐跳结果来自当前源码静态分析`));
     panel.scrollTop = scrollTop;
   }
 
@@ -171,6 +176,7 @@ export function createExploration(host) {
     const [mark, text] = HOP_TEXT[hop?.status] || ['?', '未知'];
     const item = element('li', `trace-hop ${hop?.status || ''}`);
     item.append(element('span', 'trace-hop-mark', mark), element('span', '', text));
+    if (hop?.reason) item.append(element('small', 'entry-warning', hop.reason));
     if (hop?.status === 'indirect' && hop.path?.length) item.append(element('small', '', hop.path.join(' → ')));
     return item;
   }
@@ -180,6 +186,7 @@ export function createExploration(host) {
     line.append(element('strong', '', verdictText(verdict)));
     const parts = Object.entries(HOP_TEXT).filter(([key]) => summary[key]).map(([key, [mark]]) => `${mark} ${summary[key]}`);
     const stale = ['moved', 'stale', 'missing'].filter(key => summary[key]).map(key => `${ANCHOR_TEXT[key]} ${summary[key]}`);
+    if (summary.uncertain) parts.push(`虚线关系 ${summary.uncertain}`);
     line.append(element('span', '', [...parts, ...stale].join(' · ')));
     return line;
   }
@@ -198,8 +205,8 @@ export function createExploration(host) {
       const from = positions.get(nodeOf.get(hop.from)), to = positions.get(nodeOf.get(hop.to));
       if (!from || !to || from === to) return;
       const route = host.routeEdge(from, to, state.world.width, index);
-      const path = host.svgElement('path', { d: route.d, class: `trace-hop-line ${hop.status}`, 'marker-end': 'url(#trace-arrow)' });
-      const label = host.svgElement('text', { x: route.x, y: route.y, class: 'trace-hop-label' }); label.textContent = `${index + 1}→${index + 2}`;
+      const path = host.svgElement('path', { d: route.d, class: `trace-hop-line ${hop.status}${hop.uncertain ? ' uncertain' : ''}`, 'marker-end': 'url(#trace-arrow)' });
+      const label = host.svgElement('text', { x: route.x, y: route.y, class: 'trace-hop-label' }); label.textContent = `${hop.from + 1}→${hop.to + 1}`;
       svg.append(path, label); drawn += 1;
     });
     return drawn ? svg : null;
@@ -534,5 +541,5 @@ export function createExploration(host) {
     return value ? String(value).slice(0, 10) : '时间未知';
   }
 
-  return { loadTraces, traceActive, mapNodes, decorateMap, renderTraceDetail, aiSection };
+  return { loadTraces, openTrace, closeTrace, traceActive, mapNodes, decorateMap, renderTraceDetail, aiSection };
 }

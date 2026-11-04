@@ -2,11 +2,11 @@
 
 <!-- 职责：记录网页工作台在「模块树导航、叶子模块全链路、钉住全局架构」上的后续体验目标，供以后实现时对照，不改当前契约。 -->
 
-**状态**：US-3、US-1 已实现；US-2 为 backlog（未排期）  
+**状态**：US-3、US-1 已实现；原 US-2 已由业务入口的 E1 方法调用图取代（Java 功能已实现）
 **范围**：仅网页工作台（`arch-view serve`）。桌面端、CLI、`query` / `context` / `trace` / `notes` 的数据契约不因本文改写。  
-**相关**：AI 助手的图操作见 [随身 AI 助手 PRD](ai-companion-prd.md)；静态查询与链路格式仍以 [AI 辅助探索设计契约](ai-exploration.md) 为准。
+**相关**：左侧导航升级为业务入口、US-2 由入口链路取代，见 [业务入口导航](entry-navigation.md)；AI 助手的图操作见 [随身 AI 助手 PRD](ai-companion-prd.md)；静态查询与链路格式仍以 [AI 辅助探索设计契约](ai-exploration.md) 为准。
 
-US-3、US-1 已按下文确认方案实现；US-2 仍是后续优化点。
+US-3、US-1 已按下文确认方案实现；US-2 保留为原始方案记录，当前实现以 [业务入口导航](entry-navigation.md) 的 E1 为准。
 
 ---
 

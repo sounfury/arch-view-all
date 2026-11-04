@@ -21,6 +21,7 @@
                  "  context   生成交给 AI 解释的上下文包\n"
                  "  trace     保存并逐跳校验 AI 写的调用链路\n"
                  "  notes     保存解释并检查是否过期\n"
+                 "  entries   列出 HTTP、RPC、消息、定时等业务入口并检查入口规则\n"
                  "  help      查看帮助\n\n"
                  "不传参数时显示帮助；仅传旧分析参数时仍启动桌面窗口。\n"
                  "示例：arch-view serve .\n"
@@ -44,7 +45,8 @@
    "impact" [#((requiring-resolve 'arch-view.query.cli/run!) %) true]
    "context" [#((requiring-resolve 'arch-view.context.cli/run!) %) false]
    "trace" [#((requiring-resolve 'arch-view.trace.cli/run!) %) false]
-   "notes" [#((requiring-resolve 'arch-view.notes.cli/run!) %) false]})
+   "notes" [#((requiring-resolve 'arch-view.notes.cli/run!) %) false]
+   "entries" [#((requiring-resolve 'arch-view.entries.cli/run!) %) false]})
 (def ^:private common-value-options #{"--project-path" "--language" "--source-path" "--in-edn"})
 (def ^:private desktop-value-options #{"--env-file" "--zoom" "--ui-scale" "--out"})
 

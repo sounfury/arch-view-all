@@ -141,11 +141,12 @@ AI 写草稿 → `trace save` 补锚点哈希、校验、落盘 → 网页叠加
 }
 ```
 
+- `edges`（可选，入口方法图保存时填写）：`[{"from": 0, "to": 1, "style": "solid|dashed", "reason": "…"}]`。索引引用 `steps`，允许分叉、汇合与递归。存在该字段时只验证这些边，不把相邻步骤强行串成链；旧草稿不填时仍按相邻步骤验证。`author: "static"` 表示源码静态分析生成，入口快照另存 `origin`（entryId、depth、limit）。
 - `via`（可选）描述“上一步 → 本步”的方式：`call`、`http`、`event`、`db`、`config`、`return`、`other`。
 - `trace save <草稿.json> [--force]`：校验格式、为每步生成锚点哈希、填 `createdAt`、`commit`，写入 `.arch-view/traces/<id>.json`；同 id 已存在时需 `--force`。输出与 `verify` 相同的校验结果。
-- `trace list`、`trace show <id>`、`trace verify [<id>|--all] [--fix-moved] [--strict]`：`--fix-moved` 把 `moved` 锚点改到新行号；`--strict` 有 `stale`/`missing` 或 `unverified` 跳时退出码 2。
+- `trace list`、`trace show <id>`、`trace verify [<id>|--all] [--fix-moved] [--strict]`：`--fix-moved` 把 `moved` 锚点改到新行号；`--strict` 有 `stale`/`missing`、`unverified` 跳或显式虚线关系时退出码 2。
 
-逐跳校验（第 i−1 步 → 第 i 步），先用锚点路径解析模块：
+逐跳校验（默认第 i−1 步 → 第 i 步；有 `edges` 时取各边的 from → to），先用锚点路径解析模块：
 
 | `hop.status` | 条件 |
 | :--- | :--- |
@@ -156,9 +157,9 @@ AI 写草稿 → `trace save` 补锚点哈希、校验、落盘 → 网页叠加
 | `unverified` | 两端都是模块，但静态图中找不到关联：AI 推断，需要人复核 |
 | `unmapped` | 至少一端不是已分析的源码模块（前端、配置、资源等） |
 
-校验结果：`{:trace <链路> :steps [{:index i :module m :anchor <check-anchor 结果>}] :hops [{:from i-1 :to i :fromModule … :toModule … :status … :path […]}] :summary {:fresh n :moved n :stale n :missing n :direct n … :unverified n} :verdict "ok|needs-review|stale"}`。索引从 0 起；这里核对模块依赖，不证明函数调用或运行顺序。
+校验结果：`{:trace <链路> :steps [{:index i :module m :anchor <check-anchor 结果>}] :hops [{:from i-1 :to i :fromModule … :toModule … :status … :path […]}] :summary {:fresh n :moved n :stale n :missing n :direct n … :unverified n} :verdict "ok|needs-review|stale"}`。索引从 0 起；这里核对模块依赖，不证明函数调用或运行顺序。有 `edges` 时，`hops` 保留 `style` / `reason`；虚线边附 `uncertain: true`，汇总中计 `uncertain`，结论至少为 `needs-review`，即使两端存在模块依赖也不会消除原来的不确定性。
 
-接口：`GET /api/traces` → 各链路 `{:id :title :question :stepCount :summary :verdict}`；`GET /api/trace?id=…` → 完整校验结果。
+接口：`GET /api/traces` → 各链路 `{:id :title :question :stepCount :summary :verdict}`；`GET /api/trace?id=…` → 完整校验结果。网页入口图的「另存为链路」使用 `POST /api/entry/chain/save`，详见 [业务入口导航](entry-navigation.md)。
 
 ## P2 解释：`arch-view notes`
 

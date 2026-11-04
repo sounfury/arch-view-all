@@ -8,7 +8,7 @@
             [clojure.string :as str]))
 
 (declare ^:private trace-file ^:private require-text! ^:private validate-step!
-         ^:private validate-lines! ^:private require-id!)
+         ^:private validate-lines! ^:private require-id! ^:private validate-edges!)
 
 (defn validate-draft!
   "校验必填字段和逐步格式；成功时原样返回草稿。"
@@ -21,6 +21,7 @@
     (throw (ex-info "链路 steps 必须至少包含 1 步" {:status 400})))
   (doseq [[index step] (map-indexed vector (:steps draft))]
     (validate-step! (inc index) step))
+  (when (contains? draft :edges) (validate-edges! (:edges draft) (count (:steps draft))))
   draft)
 
 (defn list-ids
@@ -54,6 +55,18 @@
      trace)))
 
 ;; ===== 私有方法 =====
+
+(defn- validate-edges!
+  "可选分叉边列表，索引引用 steps；旧线性链路不需要 edges。"
+  [edges step-count]
+  (when-not (sequential? edges) (throw (ex-info "链路 edges 必须是数组" {:status 400})))
+  (doseq [{:keys [from to style reason] :as edge} edges]
+    (when-not (and (map? edge) (every? #(and (integer? %) (<= 0 % (dec step-count))) [from to]))
+      (throw (ex-info "链路边 from/to 必须是有效的步骤索引（从 0 起）" {:status 400})))
+    (when (and style (not (#{"solid" "dashed"} style)))
+      (throw (ex-info "链路边 style 只能是 solid 或 dashed" {:status 400})))
+    (when (and reason (not (string? reason)))
+      (throw (ex-info "链路边 reason 必须是字符串" {:status 400})))))
 
 (defn- require-id! [id]
   (when-not (cli-support/valid-id? id)

@@ -44,7 +44,12 @@
       <div class="rail-section-title"><strong id="nav-title">模块导航</strong> <span id="root-count"></span></div>
       <button type="button" class="icon-button" id="nav-close" aria-label="收起模块导航" title="收起模块导航" data-icon="close"></button>
     </header>
-    <div id="module-nav" class="module-nav"></div>
+    <div class="nav-tabs" id="nav-tabs" role="tablist" aria-label="导航方式" hidden>
+      <button type="button" role="tab" id="nav-tab-entries" aria-selected="false" aria-controls="entry-nav">业务入口</button>
+      <button type="button" role="tab" id="nav-tab-tree" class="active" aria-selected="true" aria-controls="module-nav">代码目录</button>
+    </div>
+    <div id="module-nav" class="module-nav" role="tabpanel" aria-labelledby="nav-tab-tree"></div>
+    <div id="entry-nav" class="module-nav entry-nav" role="tabpanel" aria-labelledby="nav-tab-entries" hidden></div>
     <div class="rail-section-title" id="trace-title" hidden><strong>调用链路</strong> <span id="trace-count"></span></div>
     <div id="trace-nav" class="module-nav trace-nav" hidden></div>
   </aside>
@@ -101,6 +106,7 @@
             <label class="sr-only" for="flow-select">选择数据流</label><select id="flow-select" hidden></select>
             <div class="map-tools"><button class="button small" id="pin-open" type="button" hidden><span aria-hidden="true" data-icon="map"></span>钉住全局架构</button><button class="icon-button" id="map-back" aria-label="返回上一级" title="返回上一级" disabled data-icon="back"></button><button class="return-button" id="map-return" hidden></button><button class="icon-button" id="zoom-out" aria-label="缩小" data-icon="minus"></button><button type="button" id="zoom-value" class="zoom-readout" title="恢复可读比例" aria-label="恢复可读比例">100%</button><button class="icon-button" id="zoom-in" aria-label="放大" data-icon="plus"></button><button class="icon-button fit-button" id="zoom-fit" aria-label="适应全图" title="适应全图" data-icon="fit"></button><button class="icon-button" id="map-fullscreen" aria-label="全屏查看" title="全屏查看" aria-pressed="false" data-icon="expand"></button><button type="button" class="button small" id="map-more" aria-expanded="false" aria-controls="map-menu">更多</button></div>
           </div>
+          <div id="entry-chain-tools" class="entry-chain-tools" role="group" aria-label="入口链路操作" hidden></div>
           <div id="map-menu" class="map-menu" hidden>
             <span id="map-provenance">连线来自源码分析</span>
             <div class="edge-controls"><label id="edge-scope-label">连线范围<select id="edge-scope" aria-label="连线范围"><option value="focus">当前模块</option><option value="all">全部模块</option></select></label><button type="button" id="complexity-toggle" class="complexity-toggle" aria-pressed="true" hidden></button><label class="edge-toggle"><input type="checkbox" id="show-edges" checked> 显示连线</label></div>

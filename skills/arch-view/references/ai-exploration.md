@@ -28,7 +28,7 @@ arch-view trace list                       # 已保存的链路
 
 ## 解释一条链路（如“点击按钮后发生了什么”“下单流程”）
 
-1. 先找入口（路由、命令、事件监听、前端处理函数），用 `query find`、`query rdeps`、`query path` 和源码阅读串起每一步，每步都定位到具体文件和行区间。
+1. 先找入口（路由、命令、事件监听、前端处理函数；Java 项目可先 `arch-view entries list` 按机制列出接口、消息消费和定时任务及其处理方法位置），用 `query find`、`query rdeps`、`query path` 和源码阅读串起每一步，每步都定位到具体文件和行区间。
 2. 写链路草稿（JSON，保存在临时目录，不要放进业务代码目录）：
 
 ```json

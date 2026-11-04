@@ -51,7 +51,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   let project = null, rootView = null, preference = {}, opened = true, expanded = false;
   let loadVersion = 0, renderVersion = 0, navigationVersion = 0;
   let flows = [], nodes = [], activeKey = '', selectedNode = null, entry = null;
-  let previewNode = null, showAllEdges = false;
+  let previewNode = null, showAllEdges = false, groupIds = new Set();
   let location = { path: [], selected: null, sourceModule: null };
   let documentError = '', drawingError = '', loading = false;
   let camera = { x: 0, y: 0, zoom: 1 }, size = { width: 1, height: 1 };
@@ -273,7 +273,8 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     project = nextProject; rootView = nextRootView; indexRootModules();
     if (changedProject) {
       preference = readPreference(project?.root);
-      cameras.clear(); activeKey = ''; entry = null; location = { path: [], selected: null, sourceModule: null };
+      entry = null; groupIds.clear();
+      cameras.clear(); activeKey = ''; location = { path: [], selected: null, sourceModule: null };
     } else if (activeKey && !expanded) cameras.set(activeKey, { ...camera });
     if (expanded) setExpanded(false);
     opened = preference.closed !== true;
@@ -585,12 +586,15 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   }
   function updateHighlight() {
     const current = matchedNodes(locationPaths());
+    const chain = matchedNodes((location.chainModules || []).map(modulePath));
     const entryPaths = entry && entry.key !== activeKey ? cachedModulePaths.filter(module => entry.targets.some(target => contains(target, module))) : [];
     const entered = entry ? (entry.key === activeKey ? new Set([entry.id]) : matchedNodes(entryPaths.length ? entryPaths : entry.targets)) : new Set();
     for (const node of nodes) {
       node.element.classList.toggle('pinned-current', current.has(node.id));
       node.element.classList.toggle('pinned-entry', entered.has(node.id));
       node.element.classList.toggle('pinned-selected', node === selectedNode);
+      node.element.classList.toggle('pinned-group', groupIds.has(node.id));
+      node.element.classList.toggle('pinned-chain', chain.has(node.id));
       if (current.has(node.id)) node.element.setAttribute('aria-current', 'location');
       else node.element.removeAttribute('aria-current');
     }
@@ -601,12 +605,13 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     status.textContent = current.size ? `当前：${currentNames.join('、')}${current.size > 1 ? `（${current.size} 个节点）` : ''}` :
       location.sourceModule || location.selected || key(location.path) ? '当前代码尚未映射到全局节点' : '项目根层 · 尚未选择代码';
     if (enteredNames.length) status.textContent += ` · 进入点：${enteredNames.join('、')}`;
+    if (chain.size) status.textContent += ` · 链路经过：${nodes.filter(node => chain.has(node.id)).map(node => node.label).join('、')}`;
     status.title = status.textContent;
     host.dataset.mapping = current.size > 1 ? 'multiple' : current.size ? 'matched' : 'unmapped';
   }
   function updateLocation(nextLocation = {}) {
     location = { path: nextLocation.path || [], selected: nextLocation.selected || null,
-      sourceModule: nextLocation.sourceModule || null, scopes: nextLocation.scopes || [] };
+      sourceModule: nextLocation.sourceModule || null, scopes: nextLocation.scopes || [], chainModules: nextLocation.chainModules || [] };
     updateHighlight();
   }
   function showNotice() {
@@ -815,5 +820,22 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     }).observe(viewport);
   }
   setWidth(PIN_WIDTH.preferred, false); applyVisibility(); showNotice();
-  return { load, updateLocation, isOpen: () => opened, open, close };
+  // 入口业务组使用文档节点标识；必要时切到包含该节点的项目数据流，再高亮并居中。
+  async function highlightGroup(ids = []) {
+    groupIds = new Set(ids);
+    if (!groupIds.size) { updateHighlight(); return 0; }
+    const matching = flows.findIndex(flow => ids.some(id => flow.roles.some(role => role.id === id)));
+    if (matching < 0) { updateHighlight(); return 0; }
+    if (!opened) open();
+    if (source.value !== 'flow' || flowIndex() !== matching) {
+      preference.source = 'flow'; preference.flow = flows[matching].key;
+      savePreference(); updateControls();
+      await renderGraph();
+    }
+    updateHighlight();
+    const matched = nodes.filter(node => groupIds.has(node.id));
+    if (matched.length) centerElements(matched.map(node => node.element));
+    return matched.length;
+  }
+  return { load, updateLocation, highlightGroup, isOpen: () => opened, open, close };
 }

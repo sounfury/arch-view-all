@@ -1,4 +1,4 @@
-;; 职责：启动本机网页服务，提供架构浏览、源码查看、重新分析、复杂度展示和人工实现状态保存功能。
+;; 职责：启动本机网页服务，提供架构浏览、业务入口导航、源码查看、重新分析、复杂度展示和人工实现状态保存功能。
 ;; 核心入口：主启动函数（-main）；启动服务（start!）。
 
 (ns arch-view.web.server
@@ -175,6 +175,8 @@
    "/architecture_document.js" ["architecture_document.js" "text/javascript; charset=utf-8"]
    "/pinned_architecture.js" ["pinned_architecture.js" "text/javascript; charset=utf-8"]
    "/exploration.js" ["exploration.js" "text/javascript; charset=utf-8"]
+   "/entries_nav.js" ["entries_nav.js" "text/javascript; charset=utf-8"]
+   "/entries_chain.js" ["entries_chain.js" "text/javascript; charset=utf-8"]
    "/map_layout.js" ["map_layout.js" "text/javascript; charset=utf-8"]
    "/pin_layout.js" ["pin_layout.js" "text/javascript; charset=utf-8"]
    "/tree_prefix.js" ["tree_prefix.js" "text/javascript; charset=utf-8"]
@@ -210,7 +212,8 @@
   (delay (merge json-routes
                 @(requiring-resolve 'arch-view.context.web/routes)
                 @(requiring-resolve 'arch-view.trace.web/routes)
-                @(requiring-resolve 'arch-view.notes.web/routes))))
+                @(requiring-resolve 'arch-view.notes.web/routes)
+                @(requiring-resolve 'arch-view.entries.web/routes))))
 
 (def ^:private max-body-bytes (* 2 1024 1024))
 

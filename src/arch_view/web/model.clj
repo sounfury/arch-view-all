@@ -18,7 +18,9 @@
     {:architecture architecture :root root :opts opts
      ;; 规范路径每个文件只算一次，避免每次浏览都对全部源码发起文件系统调用。
      :canonical-sources (canonical-sources architecture)
-     :documents (documents/discover root architecture (:architecture-doc opts))}))
+     :documents (documents/discover root architecture (:architecture-doc opts))
+     ;; 业务入口在首次打开入口导航时计算，同一次分析内复用。
+     :entries-cache (atom nil)}))
 
 (defn project-data [{:keys [architecture root documents can-reanalyze opts] :as state}]
   {:name (.getName (.toFile ^java.nio.file.Path root))

@@ -1,11 +1,11 @@
 ;; 职责：把 Javadoc/KDoc 注释正文转成 Markdown：段落、列表、代码、链接与强调标签，去掉 @author 等块标签。
-;; 核心入口：转换注释正文（markdown）。
+;; 核心入口：转换注释正文（markdown）；提取入口说明首句（summary）。
 
 (ns arch-view.web.javadoc
   (:require [clojure.string :as str]))
 
 (declare ^:private description-lines ^:private stash-pre ^:private stash-inline
-         ^:private html->markdown ^:private escape-markup ^:private paragraphs ^:private restore)
+         ^:private html->markdown ^:private escape-markup ^:private paragraphs ^:private restore ^:private decode-entities)
 
 ;; 作者用 HTML 分段时，源码里的换行只是折行，按 Javadoc 的显示效果合并；否则保留作者的换行。
 (def ^:private html-markup #"(?i)<(?:p|br|ul|ol|li|pre|h[1-6])\b[^>]*>|</p>")
@@ -23,6 +23,21 @@
                  escape-markup
                  (paragraphs html?))]
     (not-empty (str/trim (restore store text)))))
+
+(defn summary
+  "从 Javadoc 正文提取纯文本首句，复用 Markdown 转换处理内联标签与 HTML；最多 120 字。"
+  [text]
+  (when text
+    (let [lines (map #(str/replace % #"^\s*\*+ ?" "") (str/split-lines text))
+          plain (-> (or (markdown lines) "")
+                    (str/replace #"\[([^\]]+)\]\([^)]*\)" "$1")
+                    (str/replace #"\\([<>])" "$1")
+                    (str/replace #"[`*_]" "")
+                    decode-entities
+                    (str/replace #"\s+" " ") str/trim)
+          sentence (or (second (re-find #"^(.*?[。！？])" plain))
+                       (second (re-find #"^(.*?\.)(?:\s|$)" plain)) plain)]
+      (not-empty (if (> (count sentence) 120) (str (subs sentence 0 119) "…") sentence)))))
 
 ;; ===== 私有方法 =====
 

@@ -6,6 +6,8 @@
 // 页面脚本作为独立模块加载，内部函数和状态不向外部公开。
 'use strict';
 import { parseArchitectureDocument, renderDataFlow, uncoveredModules } from './architecture_document.js';
+import { createEntriesNav } from './entries_nav.js';
+import { createEntryChain } from './entries_chain.js';
 import { createExploration } from './exploration.js';
 import { createPinnedArchitecture } from './pinned_architecture.js';
 import { CARD, layoutCodeMap, routeEdge as layoutRouteEdge, scrollToReveal } from './map_layout.js';
@@ -21,9 +23,12 @@ const state = { project: null, view: null, rootView: null, path: [], selected: n
   navigationView: null, navigationPath: [], sourceModule: null, pinScope: null,
   treeExpanded: new Set(), treeViews: new Map(), treeErrors: new Map(), treeLoading: new Set(),
   detailPinned: false, heldDetail: null, detailCollapsed: true, detailForced: false,
-  complexity: { status: 'unavailable' }, showComplexity: localStorage.getItem('arch-view.show-complexity') !== 'off' };
+  complexity: { status: 'unavailable' }, showComplexity: localStorage.getItem('arch-view.show-complexity') !== 'off',
+  navTab: 'tree', navTabChosen: false };
 
 let pinnedArchitecture;
+let entriesNav;
+let entryChain;
 let mainCamera = null;
 function pinIsOpen() { return pinnedArchitecture?.isOpen() ?? true; }
 function selectedNodeLocation() {
@@ -33,6 +38,7 @@ function updatePinnedLocation() {
   const location = selectedNodeLocation();
   pinnedArchitecture?.updateLocation({
     scopes: state.pinScope?.targets.map(target => [...target.path, ...(target.nodeId ? [target.nodeId] : [])]) || [],
+    chainModules: entryChain?.modules() || [],
     path: [...location.path], selected: state.selected ? { ...state.selected, id: location.id } : null, sourceModule: state.sourceModule });
 }
 function loadPinnedArchitecture() {
@@ -104,9 +110,11 @@ function codeMapTitle() {
 function nodeIcon(node) {
   return node.buildModule ? 'module' : node.leaf ? 'file' : 'folder';
 }
-async function api(path, params = {}, method = 'GET') {
+async function api(path, params = {}, method = 'GET', body) {
   const query = new URLSearchParams(params);
-  const response = await fetch(`${path}${query.size ? '?' + query : ''}`, { method });
+  const response = await fetch(`${path}${query.size ? '?' + query : ''}`, {
+    method, ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
+  });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
   return data;
@@ -257,6 +265,7 @@ function applyNavFloat() {
 function setNavFloat(open) {
   localStorage.setItem('arch-view.nav-float', open ? 'on' : 'off');
   applyNavFloat();
+  if (entryChain?.active()) renderMap();
 }
 function setMode(mode) {
   const exploring = mode === 'explore';
@@ -290,6 +299,7 @@ async function expandSinglePackages(view, path, request) {
   return { view, path };
 }
 async function navigate(path, mode = 'explore', selectedId = null, { expand = true, keepReturn = false, pinScope = null } = {}) {
+  entryChain?.close({ restore: false });
   const request = ++state.request;
   // 依赖列表、数据流节点的临时跳转和智慧返回保留返回记录；其它导航说明用户换了关注点。
   if (!keepReturn) { state.returnTrail = []; renderReturnButton(); }
@@ -541,17 +551,52 @@ function renderTreeChildren(path) {
   for (const node of nodes) box.append(renderTreeItem(path, node));
   return box;
 }
+// 左侧导航分「业务入口」「代码目录」两个页签；标题与计数按页签分别记录，切换时不互相覆盖。
+const navHeadings = { tree: { title: '模块导航', count: '' }, entries: { title: '业务入口', count: '' } };
+function setNavHeading(tab, title, count) {
+  navHeadings[tab] = { title, count };
+  if (state.navTab === tab) applyNavHeading();
+}
+function applyNavHeading() {
+  $('#nav-title').textContent = navHeadings[state.navTab].title;
+  $('#root-count').textContent = navHeadings[state.navTab].count;
+}
+function navTabKey() { return `arch-view.nav-tab:${state.project?.root || ''}`; }
+function setNavTab(tab, remember = true) {
+  state.navTab = tab === 'entries' ? 'entries' : 'tree';
+  if (remember) localStorage.setItem(navTabKey(), state.navTab);
+  const entries = state.navTab === 'entries';
+  $('#module-nav').hidden = entries; $('#entry-nav').hidden = !entries;
+  for (const [id, active] of [['nav-tab-entries', entries], ['nav-tab-tree', !entries]]) {
+    $('#' + id).classList.toggle('active', active); $('#' + id).setAttribute('aria-selected', String(active));
+    $('#' + id).tabIndex = active ? 0 : -1;
+  }
+  applyNavHeading();
+}
+function onEntriesLoaded({ available, count }) {
+  if (entryChain?.active()) void entryChain.reload();
+  $('#nav-tabs').hidden = !available;
+  setNavHeading('entries', '业务入口', String(count).padStart(2, '0'));
+  if (!available) { if (state.navTab === 'entries') setNavTab('tree', false); return; }
+  if (state.navTabChosen) return;
+  // 默认：识别到入口时打开「业务入口」，否则留在代码目录；用户切换过则按项目记住。
+  state.navTabChosen = true;
+  setNavTab(localStorage.getItem(navTabKey()) || (count ? 'entries' : 'tree'), false);
+}
+function loadEntries() {
+  if (state.project?.language === 'java') void entriesNav.load(state.project);
+  else onEntriesLoaded({ available: false, count: 0 });
+}
 function scrollCurrentTreeNode() {
   const current = $('#module-nav .module-link.current') || $$('#module-nav .module-link.on-path').at(-1);
-  current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  if (current && state.navTab === 'tree') current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 function renderRootNav() {
   if (state.diagramKind === 'flow' && state.flowNodes.length) { renderFlowNav(); return; }
   const view = state.rootView;
   if (!view) return;
-  $('#nav-title').textContent = '模块导航';
   const roots = visibleNodes(view);
-  $('#root-count').textContent = String(roots.length).padStart(2, '0');
+  setNavHeading('tree', '模块导航', String(roots.length).padStart(2, '0'));
   const nav = $('#module-nav');
   const scroll = nav.scrollTop;
   nav.classList.add('module-tree');
@@ -565,8 +610,7 @@ function renderRootNav() {
 }
 function renderFlowNav() {
   // 数据流视图下导航列出图中节点，点击即在图上选中，不切回代码结构。
-  $('#nav-title').textContent = '数据流节点';
-  $('#root-count').textContent = String(state.flowNodes.length).padStart(2, '0');
+  setNavHeading('tree', '数据流节点', String(state.flowNodes.length).padStart(2, '0'));
   const nav = $('#module-nav');
   nav.classList.remove('module-tree');
   nav.removeAttribute('role');
@@ -627,9 +671,10 @@ function renderMap() {
   if (!state.view) return;
   const request = ++state.mapRequest;
   renderDiagramControls();
+  if (entryChain?.active()) { entryChain.render($('#map-world')); return; }
   if (state.diagramKind === 'flow') { renderFlowMap(request); return; }
   const world = $('#map-world'); world.replaceChildren();
-  world.classList.remove('flow-world');
+  world.classList.remove('flow-world', 'entry-chain-world');
   const nodes = codeMapNodes();
   $('#metric-groups').textContent = nodes.length;
   const layout = layoutFor(nodes, state.view.edges || []); state.world = layout; state.positions = layout.positions;
@@ -769,6 +814,12 @@ function statusChoices(role) {
 }
 
 function renderDiagramControls() {
+  const chaining = Boolean(entryChain?.active());
+  $('#entry-chain-tools').hidden = !chaining;
+  $('#search').disabled = chaining;
+  $('#search').placeholder = chaining ? '入口方法调用链' : '搜索模块、职责或源码…';
+  if (chaining) { renderChainControls(); return; }
+  $('#code-view').hidden = false;
   const flow = state.diagramKind === 'flow', pinned = pinIsOpen();
   $('#pin-open').hidden = pinned;
   $('#flow-view').hidden = pinned;
@@ -791,6 +842,19 @@ function renderDiagramControls() {
   $('label[for="flow-select"]').hidden = select.hidden;
   state.flows.forEach((item, index) => { const option = element('option', '', item.title); option.value = index; select.append(option); });
   select.value = state.flowIndex;
+}
+
+function renderChainControls() {
+  $('#pin-open').hidden = pinIsOpen();
+  for (const id of ['code-view', 'flow-view', 'flow-select', 'map-return', 'edge-scope-label']) $('#' + id).hidden = true;
+  $('label[for="flow-select"]').hidden = true;
+  $('#map-back').disabled = false;
+  $('#map-title').textContent = '入口方法调用链';
+  $('#analysis-state').textContent = '源码方法调用 · 出口';
+  $('#map-provenance').textContent = '来自源码静态解析；虚线表示不确定调用，排列不表示运行时顺序。';
+  $('#map-help').textContent = '单击方法看详情 · 双击打开源码 · 点击连线查看调用位置 · Ctrl + 滚轮缩放';
+  $('#cycle-filter').disabled = true; $('#cycles-panel').hidden = true;
+  $('#map-menu .legend').hidden = true; $('.flow-legend').hidden = true;
 }
 
 async function renderFlowMap(request) {
@@ -932,6 +996,7 @@ function captureHeldDetail() {
   else if (state.selected) state.heldDetail = { kind: 'node', node: state.selected, path: state.path.join('/') };
 }
 function detailDockOpen() {
+  if (entryChain?.active()) return !state.detailCollapsed;
   if (state.detailCollapsed) return false;
   return Boolean(state.detailForced || state.detailPinned || exploration.traceActive() || state.selected || state.selectedFlow);
 }
@@ -977,6 +1042,7 @@ function selectNode(id) {
   renderDetail(); applyHighlight(); renderRootNav(); updatePinnedLocation();
 }
 function clearMapSelection() {
+  if (entryChain?.active()) { state.detailCollapsed = true; state.detailForced = false; renderDetail(); return; }
   if (!state.selected && !state.hovered && !state.selectedFlow && !state.detailForced) return;
   if (state.detailPinned) captureHeldDetail();
   state.selected = null; state.hovered = null; state.selectedFlow = null;
@@ -991,7 +1057,7 @@ function clickOutsideCanvas(event) {
     menu.hidden = true; $('#map-more').setAttribute('aria-expanded', 'false');
   }
   if (target.closest('#map-viewport, #map-return, #map-menu, #map-more, #pinned-architecture, #pin-open, #drawer, #drawer-backdrop, #toast, #nav-float, #nav-open, #detail-open')) return;
-  if (target.closest('.status-choices, .detail-actions, .detail-pin-bar, .relation-list, .module-link, .cycle-line, .coverage-modules, .trace-steps, .ai-section')) return;
+  if (target.closest('.chain-call, .entry-chain-tools, .status-choices, .detail-actions, .detail-pin-bar, .relation-list, .module-link, .cycle-line, .coverage-modules, .trace-steps, .ai-section')) return;
   clearMapSelection();
 }
 
@@ -1163,6 +1229,7 @@ function enterNode(node) {
   else navigate([...(node.scopePath || state.path), (node.scopeId || node.id).replace(/\|file$/, '')]);
 }
 function applyHighlight() {
+  if (entryChain?.active()) return;
   if (!state.view) return;
   if (state.diagramKind === 'flow') {
     const query = $('#search').value.trim().toLowerCase();
@@ -1250,6 +1317,7 @@ function relationSection(title, edges, incoming, current = state.selected) {
 }
 let traceDockSeen = false;
 function renderDetail() {
+  if (entryChain?.active()) { entryChain.renderDetail($('#detail-panel')); finishDetail($('#detail-panel')); return; }
   const tracing = exploration.traceActive();
   if (tracing && !traceDockSeen) state.detailCollapsed = false;
   traceDockSeen = tracing;
@@ -1326,6 +1394,7 @@ function readableMap() {
   mainCamera = captureMapCamera(); rememberLevelCamera();
 }
 function presentCurrentMap() {
+  if (entryChain?.active()) { fitMap(); return; }
   if (state.diagramKind === 'flow') { fitMap(); return; }
   const saved = state.levelCameras.get(codeViewKey());
   if (saved) restoreMapCamera(saved);
@@ -1456,26 +1525,74 @@ function showDocument(sectionTitle) {
     }).catch(() => { pre.before(element('p', 'flow-error-note', '此流程图暂时无法绘制，以下保留原文。')); });
   }
 }
+function renderSourceContent(source, startLine, endLine = startLine) {
+  if (source.description) $('#drawer-content').append(richText(source.description, 'source-description'));
+  const list = element('ol', 'source-list');
+  source.content.split('\n').forEach(text => list.append(element('li', '', text || ' ')));
+  $('#drawer-content').append(list);
+  if (startLine) {
+    for (let index = startLine - 1; index < Math.min(endLine || startLine, list.children.length); index++) {
+      list.children[index]?.classList.add('source-target');
+    }
+    list.children[startLine - 1]?.scrollIntoView({ block: 'center' });
+  }
+}
+async function showEntryAnchor(anchor) {
+  const request = ++state.sourceRequest;
+  try {
+    const source = await api('/api/file', { path: anchor.path });
+    if (request !== state.sourceRequest) return;
+    openDrawer(anchor.symbol || anchor.path.split('/').at(-1), source.path, '入口声明来源');
+    renderSourceContent(source, anchor.startLine, anchor.endLine);
+  } catch (error) { toast(error.message); }
+}
+function showEntryDetails(items) {
+  ++state.sourceRequest;
+  const type = items[0].handler?.type || '';
+  openDrawer(type.split('.').at(-1), type, '业务入口详情');
+  const panel = $('#drawer-content');
+  const sourceNames = { xml: 'XML 订阅', dispatcher: '分发者', 'dispatch-key': '分发 key' };
+  for (const entry of items) {
+    const section = element('section', 'entry-detail');
+    section.append(element('h3', '', entry.label), element('p', '', entry.channel?.label));
+    if (entry.summary) section.append(element('p', '', entry.summary));
+    const attrs = element('dl', 'entry-attrs');
+    for (const [key, value] of Object.entries(entry.attrs || {})) {
+      attrs.append(element('dt', '', key), element('dd', '', Array.isArray(value) ? value.join('、') : value));
+    }
+    if (attrs.children.length) section.append(attrs);
+    if (entry.tags?.length) section.append(element('p', '', entry.tags.join(' · ')));
+    if (entry.warnings?.length) section.append(element('p', 'entry-warning', `警告：${entry.warnings.join('、')}`));
+    section.append(button(`处理方法：${entry.handler?.method}()`, 'text-button', () => void showSource(entry.module, entry.anchor?.startLine)));
+    for (const source of entry.sources || []) {
+      const anchor = source.anchor;
+      if (!anchor?.path) continue;
+      const line = element('p', 'entry-source-link');
+      line.append(button(`${sourceNames[source.kind] || source.kind}：${anchor.path}:${anchor.startLine}`, 'text-button', () => void showEntryAnchor(anchor)));
+      section.append(line);
+    }
+    section.append(element('small', 'entry-rule', `识别规则：${entry.rule}`));
+    panel.append(section);
+  }
+}
 async function showSource(module, line) {
   if (!module) { toast('该模块没有可用的源码路径'); return; }
   const request = ++state.sourceRequest;
   try {
     const source = await api('/api/source', { module }); if (request !== state.sourceRequest) return;
     openDrawer(module.split('.').at(-1), source.path, '源码文件');
-    if (source.description) $('#drawer-content').append(richText(source.description, 'source-description'));
-    const list = element('ol', 'source-list'); source.content.split('\n').forEach(line => list.append(element('li', '', line || ' '))); $('#drawer-content').append(list);
-    const target = line && list.children[line - 1];
-    if (target) { target.classList.add('source-target'); target.scrollIntoView({ block: 'center' }); }
+    renderSourceContent(source, line);
     state.sourceModule = module; updatePinnedLocation();
   } catch (error) { toast(error.message); }
 }
 async function reanalyze() {
+  entryChain?.close({ restore: false });
   const control = $('#reanalyze'); control.disabled = true; control.classList.add('busy'); control.replaceChildren(icon('refresh'), element('span', '', '分析中…'));
   try {
     state.project = await api('/api/reanalyze', {}, 'POST'); viewCache.clear(); resetTreeCaches(); updateProject();
     state.complexity = state.project.complexity; renderComplexityToggle();
     state.rootView = await fetchView([]);
-    loadPinnedArchitecture(); updatePinnedLocation();
+    loadPinnedArchitecture(); updatePinnedLocation(); loadEntries();
     state.navigationView = null; state.navigationPath = [];
     const doc = state.project.documents.find(d => d.id === state.document?.id) || state.project.documents.find(d => d.scope === 'project');
     try { await loadDocument(doc?.id || ''); }
@@ -1494,10 +1611,19 @@ $('#explore-nav').addEventListener('click', showExplore);
 $('#start-explore').addEventListener('click', showExplore);
 $('#nav-close').addEventListener('click', () => setNavFloat(false));
 $('#nav-open').addEventListener('click', () => setNavFloat(true));
+$('#nav-tab-entries').addEventListener('click', () => setNavTab('entries'));
+$('#nav-tab-tree').addEventListener('click', () => setNavTab('tree'));
+$('#nav-tabs').addEventListener('keydown', event => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const tab = event.key === 'Home' ? 'entries' : event.key === 'End' ? 'tree' : state.navTab === 'tree' ? 'entries' : 'tree';
+  setNavTab(tab); $(`#nav-tab-${tab === 'entries' ? 'entries' : 'tree'}`).focus();
+});
 $('#document-select').addEventListener('change', async event => { try { await loadDocument(event.target.value); } catch (error) { toast(error.message); } });
 $('#document-open').addEventListener('click', () => showDocument());
 $('#search').addEventListener('input', applyHighlight);
 for (const [id, kind] of [['code-view', 'code'], ['flow-view', 'flow']]) $('#' + id).addEventListener('click', () => {
+  entryChain?.close({ restore: false });
   state.diagramKind = kind; state.selected = null; state.selectedFlow = null; state.cyclesOnly = false;
   state.detailPinned = false; state.heldDetail = null; state.detailForced = false; state.detailCollapsed = true;
   $('#cycle-filter').classList.remove('active'); renderMap(); renderDetail(); renderRootNav(); presentCurrentMap(); updatePinnedLocation();
@@ -1514,7 +1640,7 @@ $('#flow-select').addEventListener('change', event => { state.flowIndex = Number
 $('#show-edges').addEventListener('change', applyHighlight);
 $('#edge-scope').addEventListener('change', applyHighlight);
 $('#complexity-toggle').addEventListener('click', toggleComplexity);
-$('#map-back').addEventListener('click', navigateUp);
+$('#map-back').addEventListener('click', () => entryChain?.active() ? entryChain.close() : navigateUp());
 $('#map-return').addEventListener('click', returnBack);
 $('#zoom-in').addEventListener('click', () => zoomBy(.1)); $('#zoom-out').addEventListener('click', () => zoomBy(-.1)); $('#zoom-fit').addEventListener('click', fitMap);
 $('#zoom-value').addEventListener('click', () => { readableMap(); if (state.selected && state.diagramKind === 'code') focusSelectedNode(); });
@@ -1580,7 +1706,7 @@ const exploration = createExploration({
     const node = state.view?.nodes.find(item => item.members.includes(module));
     if (node) { selectNode(node.id); focusSelectedNode(); }
   },
-  setDiagramKind: kind => { state.diagramKind = kind; },
+  setDiagramKind: kind => { entryChain?.close({ restore: false }); state.diagramKind = kind; },
   refresh: () => { if (!state.view) return; renderMap(); applyZoom(); renderDetail(); },
   refreshDetail: () => renderDetail(),
 });
@@ -1588,12 +1714,27 @@ pinnedArchitecture = createPinnedArchitecture({
   host: $('#pinned-architecture'), api, toast, onVisibilityChange: onPinVisibilityChange,
   locateModule: destination => destination?.targets?.length > 1 ? locatePinnedTargets(destination) : locatePinnedTarget(destination?.targets?.[0] || destination),
 });
+entryChain = createEntryChain({
+  state, api, element, button, icon, svgElement, $, toast, showSource, showAnchor: showEntryAnchor, openDrawer,
+  captureCamera: captureMapCamera, restoreCamera: restoreMapCamera, fitMap, applyZoom, showExplore,
+  present: () => { state.zoom = 1; state.pan = { x: 0, y: 0 }; applyZoom(); $('#map-viewport').scrollTo(0, 0); },
+  closeTrace: () => { if (exploration.traceActive()) exploration.closeTrace(); },
+  loadTraces: () => exploration.loadTraces(),
+  refresh: () => { renderMap(); renderDetail(); updatePinnedLocation(); },
+  refreshDetail: () => { state.detailCollapsed = false; state.detailForced = true; renderDetail(); },
+  openSaved: async id => { closeDrawer(); entryChain.close({ restore: false }); await exploration.openTrace(id); },
+});
+entriesNav = createEntriesNav({
+  host: $('#entry-nav'), api, element, button, icon, toast, showSource, showEntry: showEntryDetails, onLoaded: onEntriesLoaded,
+  locateModule: module => locateModule(module), openChain: entry => entryChain.open(entry),
+  highlightGroup: ids => pinnedArchitecture.highlightGroup(ids),
+});
 (async function initialize() {
   try {
     state.project = await api('/api/project'); updateProject();
     $('#edge-scope').value = state.project.edgeScope || 'focus';
     state.complexity = state.project.complexity || state.complexity; renderComplexityToggle();
-    state.rootView = await fetchView([]); loadPinnedArchitecture();
+    state.rootView = await fetchView([]); loadPinnedArchitecture(); loadEntries();
     const doc = state.project.documents.find(d => d.scope === 'project');
     try { await loadDocument(doc?.id || ''); }
     catch (error) { await loadDocument(''); toast(`说明文档读取失败：${error.message}`); }
