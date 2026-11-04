@@ -18,7 +18,7 @@ const state = { project: null, view: null, rootView: null, path: [], selected: n
   flows: [], flowIndex: 0, diagramKind: 'code', mapRequest: 0, flowNodes: [], selectedFlow: null, documentBase: [],
   returnTrail: [], coverageDocument: null, uncovered: new Set(), pendingFlowSelection: null, hovered: null,
   pan: { x: 0, y: 0 }, fullscreenCamera: null, restoreCamera: null, levelCameras: new Map(),
-  navigationView: null, navigationPath: [], sourceModule: null,
+  navigationView: null, navigationPath: [], sourceModule: null, pinScope: null,
   treeExpanded: new Set(), treeViews: new Map(), treeErrors: new Map(), treeLoading: new Set(),
   detailPinned: false, heldDetail: null, detailCollapsed: true, detailForced: false,
   complexity: { status: 'unavailable' }, showComplexity: localStorage.getItem('arch-view.show-complexity') !== 'off' };
@@ -26,8 +26,14 @@ const state = { project: null, view: null, rootView: null, path: [], selected: n
 let pinnedArchitecture;
 let mainCamera = null;
 function pinIsOpen() { return pinnedArchitecture?.isOpen() ?? true; }
+function selectedNodeLocation() {
+  return { path: state.selected?.scopePath || state.path, id: state.selected?.scopeId || state.selected?.id || null };
+}
 function updatePinnedLocation() {
-  pinnedArchitecture?.updateLocation({ path: [...state.path], selected: state.selected, sourceModule: state.sourceModule });
+  const location = selectedNodeLocation();
+  pinnedArchitecture?.updateLocation({
+    scopes: state.pinScope?.targets.map(target => [...target.path, ...(target.nodeId ? [target.nodeId] : [])]) || [],
+    path: [...location.path], selected: state.selected ? { ...state.selected, id: location.id } : null, sourceModule: state.sourceModule });
 }
 function loadPinnedArchitecture() {
   // 全局文档独立加载，渲染或读取失败不阻塞当前层代码图。
@@ -89,6 +95,7 @@ function buildModuleSummary() {
 }
 // 在构建模块内部时标题保留所属模块，自动展开多层单子包后也能看出当前在哪个模块。
 function codeMapTitle() {
+  if (state.pinScope) return `${state.pinScope.label || '架构节点'} · 全部代码范围`;
   const path = state.path, module = path.length && buildModuleNamed(path[0]);
   if (!path.length) return state.project.buildModules?.length ? `全局架构地图 · ${buildModuleSummary()}` : '全局架构地图';
   if (!module) return `${path.at(-1)} · 内部架构`;
@@ -132,8 +139,8 @@ function cardText(markdown) {
   return String(markdown || '').replace(/```[\s\S]*?```/g, ' ').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/[`*]/g, '').replace(/\\([<>])/g, '$1').replace(/^\s*- /gm, '').replace(/\s+/g, ' ').trim();
 }
-function roleFor(node, path = state.path) {
-  return state.roles.get([...path, node.id.replace(/\|file$/, '')].join('/'));
+function roleFor(node, path = node.scopePath || state.path) {
+  return state.roles.get([...path, (node.scopeId || node.id).replace(/\|file$/, '')].join('/'));
 }
 function flowRoleFor(id) {
   if (state.flowRoles.has(id)) return state.flowRoles.get(id);
@@ -167,10 +174,10 @@ function renderDocumentSelect() {
   }
   select.value = state.document?.id || '';
 }
-async function loadDocument(id, packagePath = state.document?.id === id ? state.documentBase : state.path) {
+async function loadDocument(id, packagePath = state.document?.id === id ? state.documentBase : state.path, navigationRequest = null) {
   const request = ++state.documentRequest;
   const doc = id ? await api('/api/document', { id }) : null;
-  if (request !== state.documentRequest) return;
+  if (request !== state.documentRequest || (navigationRequest !== null && navigationRequest !== state.request)) return;
   state.document = doc;
   const parsed = parseArchitectureDocument(doc?.content || '');
   state.sections = parsed.sections;
@@ -214,7 +221,7 @@ function renderCoverage() {
   details.append(list); panel.append(details);
 }
 function visibleNodes(view) {
-  return view.nodes.filter(node => node.members.some(module => !state.uncovered.has(module)));
+  return view.pinnedScope ? view.nodes : view.nodes.filter(node => node.members.some(module => !state.uncovered.has(module)));
 }
 function updateOverview() {
   const doc = state.document;
@@ -282,16 +289,16 @@ async function expandSinglePackages(view, path, request) {
   }
   return { view, path };
 }
-async function navigate(path, mode = 'explore', selectedId = null, { expand = true, keepReturn = false } = {}) {
+async function navigate(path, mode = 'explore', selectedId = null, { expand = true, keepReturn = false, pinScope = null } = {}) {
   const request = ++state.request;
   // 依赖列表、数据流节点的临时跳转和智慧返回保留返回记录；其它导航说明用户换了关注点。
   if (!keepReturn) { state.returnTrail = []; renderReturnButton(); }
   const fromOverview = !path.length && mode === 'overview';
   $('#analysis-state').textContent = '正在读取结构…';
   try {
-    let view = await fetchView(path);
+    let view = pinScope ? await fetchPinnedScopeView(pinScope, path) : await fetchView(path);
     if (request !== state.request) return false;
-    const atRoot = !path.length;
+    const atRoot = !path.length && !pinScope;
     if (atRoot) { state.rootView = view; state.navigationView = null; renderCoverage(); }
     if (!state.navigationView) {
       const navigation = await expandSinglePackages(state.rootView, [], request);
@@ -299,15 +306,16 @@ async function navigate(path, mode = 'explore', selectedId = null, { expand = tr
       state.navigationView = navigation.view; state.navigationPath = navigation.path;
     }
     // 明确定位源码时保留目标所在层，避免自动展开把选中节点跳过去。
-    if (!selectedId && expand) {
+    if (!pinScope && !selectedId && expand) {
       const expanded = atRoot ? { view: state.navigationView, path: state.navigationPath }
         : await expandSinglePackages(view, path, request);
       if (!expanded || request !== state.request) return false;
       view = expanded.view; path = expanded.path;
     }
-    state.view = view; state.path = path; state.selected = null; state.hovered = null; state.cyclesOnly = false;
+    state.view = view; state.path = path; state.pinScope = pinScope;
+    state.selected = null; state.hovered = null; state.cyclesOnly = false;
     state.selectedFlow = null; state.detailPinned = false; state.heldDetail = null; state.detailForced = false;
-    state.detailCollapsed = !selectedId;
+    state.detailCollapsed = !selectedId && !exploration.traceActive();
     state.diagramKind = fromOverview && state.flows.length && !pinIsOpen() ? 'flow' : 'code';
     updatePinnedLocation();
     setMode(mode); $('#search').value = ''; $('#cycle-filter').classList.remove('active');
@@ -317,14 +325,14 @@ async function navigate(path, mode = 'explore', selectedId = null, { expand = tr
     $('#cycle-filter').classList.toggle('has-cycles', view.cycles.length > 0);
     renderCoverage(); renderBreadcrumbs(); renderRootNav(); renderMap(); renderDetail(); renderCycles(); presentCurrentMap();
     $('#analysis-state').textContent = state.diagramKind === 'flow' ? '文档数据流' : '源码静态依赖';
-    const local = path.map((_, index) => path.slice(0, index + 1)).reverse()
+    const local = !pinScope && path.map((_, index) => path.slice(0, index + 1)).reverse()
       .map(scope => ({ path: scope, doc: view.documents.find(doc => doc.directory.endsWith(scope.join('/').replace(/-/g, '_'))) }))
       .find(match => match.doc);
     if (local && !(fromOverview && state.project.documents.find(doc => doc.id === state.document?.id)?.scope === 'project')) {
-      await loadDocument(local.doc.id, local.path);
+      await loadDocument(local.doc.id, local.path, request);
     }
     else if (state.document && state.project.documents.find(d => d.id === state.document.id)?.scope === 'package') {
-      const projectDoc = state.project.documents.find(d => d.scope === 'project'); await loadDocument(projectDoc?.id || '');
+      const projectDoc = state.project.documents.find(d => d.scope === 'project'); await loadDocument(projectDoc?.id || '', [], request);
     }
     if (request !== state.request) return false;
     if (selectedId) { selectNode(selectedId); renderRootNav(); focusSelectedNode(); }
@@ -341,6 +349,7 @@ function renderBreadcrumbs() {
     if (module) { crumb.classList.add('build-crumb'); crumb.prepend(icon('module')); crumb.title = `${buildModuleKind(module)} · ${buildModuleDirectory(module)}`; }
     nav.append(element('i', '', '/'), crumb);
   });
+  if (state.pinScope) nav.append(element('i', '', '/'), element('span', '', state.pinScope.label || '全部代码范围'));
 }
 // 智慧返回：记住临时跳转前的层级和选中节点，可逐级跳回。
 function returnTarget(node = state.selected, { allowEmpty = false, camera = false } = {}) {
@@ -352,8 +361,8 @@ function returnTarget(node = state.selected, { allowEmpty = false, camera = fals
       flowIndex: state.flowIndex };
   } else {
     if (!state.selected && !allowEmpty) return null;
-    target = { path: [...state.path], id: state.selected?.id || null,
-      label: state.selected ? titleFor(state.selected) : state.path.at(-1) || '全局架构' };
+    target = { path: [...state.path], id: state.selected?.id || null, pinScope: state.pinScope,
+      label: state.selected ? titleFor(state.selected) : state.pinScope?.label || state.path.at(-1) || '全局架构' };
   }
   if (camera) { target.camera = captureMapCamera(); target.mode = state.mode; }
   return target;
@@ -378,10 +387,10 @@ async function returnBack() {
     if (state.document?.id !== target.documentId) await loadDocument(target.documentId, target.documentBase);
     state.diagramKind = 'flow'; state.flowIndex = target.flowIndex; state.pendingFlowSelection = target.id;
     renderMap(); renderDetail(); renderRootNav();
-  } else if (target.path.join('/') === state.path.join('/')) {
+  } else if (target.path.join('/') === state.path.join('/') && (target.pinScope || null) === state.pinScope) {
     if (target.mode) setMode(target.mode);
     selectNode(target.id); renderRootNav(); if (!target.camera) focusSelectedNode();
-  } else if (!await navigate(target.path, target.mode || 'explore', target.id, { expand: false, keepReturn: true })) return;
+  } else if (!await navigate(target.path, target.mode || 'explore', target.id, { expand: false, keepReturn: true, pinScope: target.pinScope })) return;
   if (target.camera) restoreMapCamera(target.camera);
   updatePinnedLocation();
 }
@@ -408,10 +417,11 @@ function resetTreeCaches() {
   state.treeLoading.clear();
 }
 function syncTreeToLocation() {
-  const location = `${treePathKey(state.path)}|${state.selected?.id || ''}`;
+  const current = selectedNodeLocation();
+  const location = `${treePathKey(current.path)}|${current.id || ''}`;
   if (location === treeSyncedLocation) return;
   treeSyncedLocation = location;
-  const prefixes = state.path.map((_, index) => state.path.slice(0, index + 1));
+  const prefixes = current.path.map((_, index) => current.path.slice(0, index + 1));
   for (const prefix of prefixes) {
     const key = treePathKey(prefix);
     state.treeExpanded.add(key);
@@ -489,7 +499,8 @@ function renderTreeItem(path, node) {
   copy.append(element('span', 'module-name', label), element('small', '', secondary));
   link.append(icon(nodeIcon(terminal.leaf ? terminal : node)), copy, element('span', 'module-count', terminal.moduleCount));
   link.classList.toggle('build-module', Boolean(module) && chain.nodes.length === 1);
-  const mark = chainPresence(state.path, state.selected?.id || null, path, chain);
+  const current = selectedNodeLocation();
+  const mark = chainPresence(current.path, current.id, path, chain);
   if (mark) link.classList.add(mark);
   link.title = chain.nodes.length > 1 ? fullPath : (role?.label || (module ? `${buildModuleKind(module)} ${node.label}（${buildModuleDirectory(module)}）` : node.fullName));
   const copyPath = button('复制', 'tree-copy', event => {
@@ -578,8 +589,15 @@ function scrollIntoMap(target) {
 }
 let layoutKey = '';
 let layoutColumns = null;
+function codeViewKey() {
+  return `${state.path.join('/')}|${state.pinScope ? JSON.stringify(state.pinScope.targets) : ''}`;
+}
+function codeMapNodes() {
+  const nodes = visibleNodes(state.view);
+  return state.pinScope ? nodes : exploration.mapNodes(nodes);
+}
 function layoutIdentity(nodes) {
-  return `${state.path.join('/')}|${nodes.map(node => node.id).join('|')}`;
+  return `${codeViewKey()}|${nodes.map(node => node.id).join('|')}`;
 }
 function layoutFor(nodes, edges) {
   // 根视图和内部视图都按依赖层排布；列数随画布宽度选择，几像素变化不改列。
@@ -612,7 +630,7 @@ function renderMap() {
   if (state.diagramKind === 'flow') { renderFlowMap(request); return; }
   const world = $('#map-world'); world.replaceChildren();
   world.classList.remove('flow-world');
-  const nodes = exploration.mapNodes(visibleNodes(state.view));
+  const nodes = codeMapNodes();
   $('#metric-groups').textContent = nodes.length;
   const layout = layoutFor(nodes, state.view.edges || []); state.world = layout; state.positions = layout.positions;
   world.dataset.columns = String(layout.columns);
@@ -720,8 +738,9 @@ async function watchComplexity() {
   if (state.complexity.status !== 'ready' || !state.view) return;
   // 复杂度进入节点数据，缓存的各层视图全部过期。
   viewCache.clear();
-  const path = state.path.join('/'), view = await fetchView(path);
-  if (path !== state.path.join('/')) return;
+  const request = state.request, scope = state.pinScope, path = [...state.path];
+  const view = scope ? await fetchPinnedScopeView(scope, path) : await fetchView(path);
+  if (request !== state.request || scope !== state.pinScope || path.join('/') !== state.path.join('/')) return;
   const selected = state.selected?.id;
   state.view = view; state.selected = view.nodes.find(node => node.id === selected) || null;
   if (state.diagramKind === 'code') { renderMap(); applyZoom(); renderDetail(); }
@@ -990,10 +1009,10 @@ async function locateModule(module, options = {}) {
 }
 
 async function locatePinnedTarget(target) {
-  if (target && typeof target === 'object' && target.module) return locateModule(target.module, { keepReturn: true });
+  if (target && typeof target === 'object' && target.module) return locateModule(target.module);
   const rawPath = target && typeof target === 'object' ? target.path : target;
   const path = Array.isArray(rawPath) ? [...rawPath] : String(rawPath || '').split('/').filter(Boolean);
-  if (!path.length) return navigate([], 'explore', null, { expand: false, keepReturn: true });
+  if (!path.length) return navigate([], 'explore', null, { expand: false });
   // 文档角色和根层节点给的是包路径，不能交给只认识完整源码模块名的 /api/locate。
   const request = ++state.request;
   try {
@@ -1003,13 +1022,104 @@ async function locatePinnedTarget(target) {
     const node = view.nodes.find(item => item.id === id)
       || view.nodes.find(item => item.id.replace(/\|file$/, '') === id);
     if (node) {
-      if (node.leaf) return locateModule(node.sourceModule, { keepReturn: true });
-      return navigate(path, 'explore', null, { expand: false, keepReturn: true });
+      if (node.leaf) return locateModule(node.sourceModule);
+      return navigate(path, 'explore', null, { expand: false });
     }
-    if (typeof target === 'string') return locateModule(target, { keepReturn: true });
+    if (typeof target === 'string') return locateModule(target);
     toast('此架构节点在当前代码结构中没有对应模块');
   } catch (error) { if (request === state.request) toast(error.message); }
   return false;
+}
+
+// 多范围只组合真实视图；保留各节点的原始层级，供源码、树导航和下钻使用。
+function pathContains(parent, child) {
+  return parent.length <= child.length && parent.every((part, index) => part === child[index]);
+}
+async function resolvePinnedScope(target) {
+  if (target.module) {
+    const location = await api('/api/locate', { module: target.module });
+    return { path: location.path, nodeId: location.nodeId };
+  }
+  const path = [...target.path];
+  if (!path.length) return { path };
+  const parent = path.slice(0, -1), id = path.at(-1);
+  const view = await fetchView(parent);
+  const node = view.nodes.find(item => item.id === id) || view.nodes.find(item => item.id.replace(/\|file$/, '') === id);
+  if (!node) throw new Error('此架构节点在当前代码结构中没有对应模块');
+  return node.leaf ? { path: parent, nodeId: node.id } : { path };
+}
+async function locatePinnedTargets(destination) {
+  const request = ++state.request;
+  $('#analysis-state').textContent = '正在定位模块…';
+  try {
+    const scopes = await Promise.all(destination.targets.map(resolvePinnedScope));
+    if (request !== state.request) return false;
+    // 包范围覆盖其后代；同一路径的文件与包（|file）仍是两个独立范围。
+    const targets = scopes.filter((scope, index) => !scopes.some((other, otherIndex) => {
+      if (otherIndex === index) return false;
+      if (!other.nodeId && pathContains(other.path, scope.path)) {
+        return other.path.length < scope.path.length || Boolean(scope.nodeId) || otherIndex < index;
+      }
+      return other.nodeId === scope.nodeId && other.path.join('/') === scope.path.join('/') && otherIndex < index;
+    }));
+    const common = [...targets[0].path];
+    for (const target of targets) while (!pathContains(common, target.path)) common.pop();
+    return navigate(common, 'explore', null, { expand: false, pinScope: { targets, label: destination.label } });
+  } catch (error) {
+    if (request === state.request) { $('#analysis-state').textContent = '源码静态依赖'; toast(error.message); }
+    return false;
+  }
+}
+async function fetchPinnedScopeView(scope, common) {
+  const entries = await Promise.all(scope.targets.map(async target => ({ ...target, view: await fetchView(target.path) })));
+  const nodes = [], owners = new Map(), dependencyTargets = new Map();
+  const relativeId = (path, id) => [...path, id].slice(common.length).join('/');
+  for (const entry of entries) {
+    const selected = entry.nodeId ? entry.view.nodes.filter(node => node.id === entry.nodeId) : entry.view.nodes;
+    if (entry.nodeId && !selected.length) throw new Error('此架构节点在当前代码结构中没有对应模块');
+    for (const node of selected) {
+      const id = relativeId(entry.path, node.id);
+      nodes.push({ ...node, id, label: [...entry.path.slice(common.length), node.label].join('/'), scopePath: entry.path, scopeId: node.id });
+      for (const member of node.members) owners.set(member, id);
+    }
+  }
+  const ids = new Set(nodes.map(node => node.id)), pairs = new Map();
+  // 相同父层的多个叶子共用一次边投影，避免重复计数。
+  const views = new Map(entries.map(entry => [entry.path.join('/'), entry]));
+  for (const entry of views.values()) {
+    const local = new Map(entry.view.nodes.map(node => [node.id, node]));
+    const endpoint = id => {
+      const node = local.get(id);
+      if (!node) return owners.get(id) || id;
+      const mapped = new Set(node.members.map(member => owners.get(member)));
+      if (mapped.size === 1 && !mapped.has(undefined)) return mapped.values().next().value;
+      // 较宽的包聚合不能猜分到多个目标；对应窄范围的真实外部边会补齐这些关系。
+      if ([...mapped].some(owner => owner !== undefined)) return null;
+      const key = node.sourceModule || relativeId(entry.path, node.id);
+      dependencyTargets.set(key, { path: entry.path, node });
+      return key;
+    };
+    const projected = new Map();
+    for (const edge of entry.view.displayEdges) {
+      const from = endpoint(edge.from), to = endpoint(edge.to);
+      if (from === null || to === null || from === to || (!ids.has(from) && !ids.has(to))) continue;
+      const key = JSON.stringify([from, to]);
+      const previous = projected.get(key);
+      projected.set(key, { ...edge, from, to, count: (previous?.count || 0) + edge.count,
+        type: previous?.type === 'abstract' ? 'abstract' : edge.type });
+    }
+    for (const [key, edge] of projected) {
+      const previous = pairs.get(key);
+      // 同一条跨范围依赖会在两侧 API 出现，取完整投影的计数，不把它相加两遍。
+      pairs.set(key, { ...edge, count: Math.max(previous?.count || 0, edge.count),
+        type: previous?.type === 'abstract' ? 'abstract' : edge.type });
+    }
+  }
+  const displayEdges = [...pairs.values()];
+  return { path: common, nodes, displayEdges, edges: displayEdges.filter(edge => ids.has(edge.from) && ids.has(edge.to)),
+    cycles: [...new Set(entries.filter(entry => !entry.nodeId).flatMap(entry => entry.view.cycles))],
+    documents: [...new Map(entries.flatMap(entry => entry.view.documents).map(doc => [doc.id, doc])).values()],
+    dependencyTargets, pinnedScope: true };
 }
 
 function pinOcclusion() {
@@ -1050,7 +1160,7 @@ function focusSelectedNode() {
 }
 function enterNode(node) {
   if (node.leaf) showSource(node.sourceModule);
-  else navigate([...state.path, node.id.replace(/\|file$/, '')]);
+  else navigate([...(node.scopePath || state.path), (node.scopeId || node.id).replace(/\|file$/, '')]);
 }
 function applyHighlight() {
   if (!state.view) return;
@@ -1093,10 +1203,12 @@ function applyHighlight() {
 }
 function relationItem(id, count, incoming, label) {
   const node = state.view.nodes.find(n => n.id === id);
+  const dependency = state.view.dependencyTargets?.get(id);
   const item = button('', `relation${incoming ? ' incoming' : ''}`, () => {
     rememberReturn();
     if (node) { selectNode(id); focusSelectedNode(); }
-    else locateModule(id, { keepReturn: true });
+    else if (dependency && !dependency.node.leaf) navigate([...dependency.path, dependency.node.id], 'explore', null, { keepReturn: true });
+    else locateModule(dependency?.node.sourceModule || id, { keepReturn: true });
   });
   item.title = node ? '定位这个模块' : `${id}\n跳转到这个模块所在的软件包，并选中它`;
   item.append(element('span', '', node ? titleFor(node) : label));
@@ -1201,7 +1313,7 @@ function applyZoom() {
 }
 function rememberLevelCamera() {
   if (!state.view || state.diagramKind !== 'code') return;
-  state.levelCameras.set(state.path.join('/'), captureMapCamera());
+  state.levelCameras.set(codeViewKey(), captureMapCamera());
 }
 function zoomBy(delta) { state.zoom = Math.min(1.8, Math.max(.15, state.zoom + delta)); applyZoom(); rememberLevelCamera(); }
 function readableMap() {
@@ -1215,7 +1327,7 @@ function readableMap() {
 }
 function presentCurrentMap() {
   if (state.diagramKind === 'flow') { fitMap(); return; }
-  const saved = state.levelCameras.get(state.path.join('/'));
+  const saved = state.levelCameras.get(codeViewKey());
   if (saved) restoreMapCamera(saved);
   else readableMap();
 }
@@ -1250,7 +1362,7 @@ function restoreMapCamera(camera) {
 function setMapFullscreen(active) {
   const grid = $('.view-grid'), control = $('#map-fullscreen');
   if (grid.classList.contains('is-fullscreen') === active) return;
-  const key = `${state.diagramKind}:${state.path.join('/')}`;
+  const key = `${state.diagramKind}:${codeViewKey()}`;
   if (active) state.fullscreenCamera = { key, ...captureMapCamera() };
   else { state.restoreCamera = state.fullscreenCamera?.key === key ? state.fullscreenCamera : null; state.fullscreenCamera = null; }
   grid.classList.toggle('is-fullscreen', active); document.body.classList.toggle('map-fullscreen', active);
@@ -1448,7 +1560,7 @@ new ResizeObserver(() => {
   const previousColumns = layoutColumns;
   observedViewportWidth = bounds.width; observedViewportHeight = bounds.height; observedFullscreen = fullscreen;
   if (state.diagramKind === 'code') {
-    const nodes = exploration.mapNodes(visibleNodes(state.view));
+    const nodes = codeMapNodes();
     const preview = layoutCodeMap({
       nodes: nodes.map(node => ({ id: node.id, layer: node.layer })),
       edges: state.view.edges || [],
@@ -1474,13 +1586,7 @@ const exploration = createExploration({
 });
 pinnedArchitecture = createPinnedArchitecture({
   host: $('#pinned-architecture'), api, toast, onVisibilityChange: onPinVisibilityChange,
-  locateModule: async destination => {
-    const target = returnTarget(state.selected, { allowEmpty: true, camera: true });
-    const located = await locatePinnedTarget(destination);
-    if (!located) return false;
-    if (target) { state.returnTrail.push(target); renderReturnButton(); }
-    return true;
-  },
+  locateModule: destination => destination?.targets?.length > 1 ? locatePinnedTargets(destination) : locatePinnedTarget(destination?.targets?.[0] || destination),
 });
 (async function initialize() {
   try {

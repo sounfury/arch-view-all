@@ -5,7 +5,8 @@ import { flowLayers, layoutCodeMap, parseFlowEdges } from './map_layout.js';
 const STORAGE_PREFIX = 'arch-view.pinned-architecture:';
 const COMPACT_CARD = { width: 92, height: 32 };
 const COMPACT_SPACING = { gapX: 10, gapY: 8, layerGap: 18, marginX: 12, marginTop: 14, marginBottom: 12, gutter: 16 };
-const PIN_WIDTH = { min: 320, max: 420, preferred: 360 };
+const PIN_WIDTH = { min: 320, preferred: 360 };
+const PIN_HEIGHT_MIN = 168;
 let componentSequence = 0;
 
 function shortLabel(label) {
@@ -14,8 +15,8 @@ function shortLabel(label) {
   const name = tail || raw;
   return name.length > 8 ? `${name.slice(0, 7)}\u2026` : name;
 }
-function clampWidth(value) {
-  return Math.max(PIN_WIDTH.min, Math.min(PIN_WIDTH.max, Math.round(Number(value) || PIN_WIDTH.preferred)));
+function clampWidth(value, maximum = Number.MAX_SAFE_INTEGER) {
+  return Math.min(maximum, Math.max(PIN_WIDTH.min, Math.round(Number(value) || PIN_WIDTH.preferred)));
 }
 
 function html(tag, className = '', text) {
@@ -92,19 +93,10 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   notice.append(message, retry); viewport.append(world, notice);
   const detail = html('div', 'pinned-detail'); detail.id = 'pin-detail';
   const copy = html('div', 'pinned-detail-copy');
-  const detailTitle = html('strong', 'pinned-detail-title', '单击节点查看说明'); detailTitle.id = 'pin-detail-title';
-  const detailSummary = html('span', 'pinned-detail-summary', '双击已绑定节点或点击“进入代码”跳转'); detailSummary.id = 'pin-detail-summary';
+  const detailTitle = html('strong', 'pinned-detail-title', '点击模块进入代码'); detailTitle.id = 'pin-detail-title';
+  const detailSummary = html('span', 'pinned-detail-summary', '一次展示该模块覆盖的全部代码范围'); detailSummary.id = 'pin-detail-summary';
   copy.append(detailTitle, detailSummary);
-  const targetSelect = html('select', 'pinned-target'); targetSelect.id = 'pin-target'; targetSelect.hidden = true;
-  targetSelect.setAttribute('aria-label', '选择要进入的代码范围');
-  targetSelect.addEventListener('change', () => {
-    if (!selectedNode) return;
-    selectedNode.chosenTarget = targetSelect.value;
-    enterButton.disabled = !selectedNode.targets.some(target => target.key === targetSelect.value);
-  });
-  const enterButton = html('button', 'pinned-button pinned-enter', '进入代码'); enterButton.id = 'pin-enter'; enterButton.type = 'button'; enterButton.disabled = true;
-  enterButton.addEventListener('click', () => { if (selectedNode) void enterNode(selectedNode, true); });
-  detail.append(copy, targetSelect, enterButton);
+  detail.append(copy);
   const footer = html('div', 'pinned-footer');
   const status = html('span', 'pinned-location'); status.id = 'pin-location'; status.setAttribute('role', 'status');
   const legend = html('span', 'pinned-legend');
@@ -112,8 +104,11 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   footer.append(status, legend);
   const splitter = html('div', 'pinned-splitter'); splitter.id = 'pin-splitter'; splitter.tabIndex = 0;
   splitter.setAttribute('role', 'separator'); splitter.setAttribute('aria-label', '调整全局架构浮层宽度');
-  splitter.setAttribute('aria-orientation', 'vertical'); splitter.setAttribute('aria-valuemin', String(PIN_WIDTH.min)); splitter.setAttribute('aria-valuemax', String(PIN_WIDTH.max));
-  host.replaceChildren(toolbar, provenance, viewport, detail, footer, splitter);
+  splitter.setAttribute('aria-orientation', 'vertical'); splitter.setAttribute('aria-valuemin', String(PIN_WIDTH.min));
+  const corner = html('button', 'pinned-resize-corner'); corner.id = 'pin-resize-corner'; corner.type = 'button';
+  corner.setAttribute('aria-label', '调整全局架构浮层宽高');
+  corner.title = '拖动左下角调整宽高；方向键微调';
+  host.replaceChildren(toolbar, provenance, viewport, detail, footer, splitter, corner);
 
   function savePreference() {
     if (!project) return;
@@ -134,31 +129,34 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     opened = false; preference.closed = true; savePreference(); applyVisibility();
   }
   function setWidth(px, persist = true) {
-    const width = clampWidth(px);
-    preference.width = width;
-    delete preference.height;
-    host.style.setProperty('--pin-width', `${width}px`);
-    splitter.setAttribute('aria-valuenow', String(width));
-    if (persist) savePreference();
+    preference.width = clampWidth(px, sizeLimits().width);
     layoutFrame();
+    if (persist) savePreference();
+  }
+  function sizeLimits() {
+    const bounds = host.parentElement?.getBoundingClientRect();
+    return { width: Math.max(1, (bounds?.width || PIN_WIDTH.preferred + 16) - 16),
+      height: Math.max(1, (bounds?.height || 520) - 16) };
   }
   function layoutFrame() {
     if (expanded) return;
     const bounds = host.parentElement?.getBoundingClientRect();
     if (!bounds?.width || !bounds?.height) return;
-    const width = clampWidth(preference.width || PIN_WIDTH.preferred);
-    const maxHeight = bounds.height / 3;
-    const cramped = bounds.width < 560 || bounds.height < 320 || maxHeight < 150;
+    const cramped = bounds.width < 560 || bounds.height < 320;
     host.classList.toggle('pinned-cramped', cramped);
     if (cramped) {
       host.style.setProperty('--pin-width', 'auto');
       host.style.setProperty('--pin-height', 'auto');
       return;
     }
-    const usable = Math.min(width, Math.max(160, bounds.width - 16));
-    const height = Math.max(168, Math.min(maxHeight, Math.round(usable * 0.78)));
-    host.style.setProperty('--pin-width', `${Math.round(usable)}px`);
+    const limits = sizeLimits();
+    const width = clampWidth(preference.width, limits.width);
+    const defaultHeight = Math.max(PIN_HEIGHT_MIN, Math.min(bounds.height / 3, Math.round(width * 0.78)));
+    const height = Math.min(limits.height, Math.max(PIN_HEIGHT_MIN, Number(preference.floatingHeight) || defaultHeight));
+    host.style.setProperty('--pin-width', `${Math.round(width)}px`);
     host.style.setProperty('--pin-height', `${Math.round(height)}px`);
+    splitter.setAttribute('aria-valuenow', String(width));
+    splitter.setAttribute('aria-valuemax', String(limits.width));
   }
   function buildCompact(items, edges, layered) {
     const layers = layered ? null : flowLayers(items.map(item => item.id), edges);
@@ -311,7 +309,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
           // 无职责声明时仅接受节点 ID 对真实代码路径的精确匹配，不按标签猜测。
           const scopes = roles.length ? explicit : validTarget(key(node.id)) ? [key(node.id)] : [];
           const targets = scopes.map(scope => targetFor(scope)).filter(Boolean);
-          return { ...node, roles, scopes, targets, chosenTarget: targets.length === 1 ? targets[0].key : '',
+          return { ...node, roles, scopes, targets,
             summary: roles.map(role => role.summary).filter(Boolean).join('；') };
         });
         for (const edge of diagram.querySelectorAll('.edgePaths path')) edge.classList.add('pinned-edge');
@@ -396,7 +394,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
       const resolved = node.leaf ? leafModule && { key: modulePath(leafModule), target: { module: leafModule } } :
         { key: key(node.id), target: { path: [node.id] } };
       const targets = resolved ? [resolved] : [];
-      return { id: node.id, label, element, scopes: [], targets, chosenTarget: resolved?.key || '',
+      return { id: node.id, label, element, scopes: [], targets,
         summary: node.description || `${node.members?.length || 0} 个源码模块 · 根层代码边界` };
     });
     fullDiagram = diagram;
@@ -419,50 +417,38 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     element.dataset.targets = JSON.stringify(node.targets.map(target => target.target));
     if (node.targets.length === 1) element.dataset.target = node.targets[0].key;
     element.setAttribute('tabindex', '0'); element.setAttribute('role', 'button');
-    element.setAttribute('aria-label', `${node.label}${node.targets.length > 1 ? '，多个代码范围，单击后选择目标' : node.targets.length ? '，双击进入代码' : '，无代码绑定'}`);
+    element.setAttribute('aria-label', `${node.label}${node.targets.length ? '，点击进入全部覆盖代码' : '，无代码绑定'}`);
     element.addEventListener('click', event => {
-      event.stopPropagation(); if (suppressClick) return;
-      selectedNode = node; showDetail(); updateHighlight();
+      event.stopPropagation(); if (suppressClick || event.detail > 1) return;
+      void enterNode(node);
     });
-    element.addEventListener('dblclick', event => { event.stopPropagation(); if (!suppressClick) void enterNode(node); });
+    element.addEventListener('dblclick', event => event.stopPropagation());
     element.addEventListener('keydown', event => {
       if (event.key === ' ' || event.key === 'Enter') {
         event.preventDefault(); event.stopPropagation();
-        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) void enterNode(node, true);
-        else { selectedNode = node; showDetail(); updateHighlight(); }
+        if (!event.repeat) void enterNode(node);
       }
     });
   }
   function showDetail() {
-    detailTitle.textContent = selectedNode?.label || '单击节点查看说明';
+    detailTitle.textContent = selectedNode?.label || '点击模块进入代码';
     const targets = selectedNode?.targets || [];
     detailSummary.textContent = selectedNode ?
-      [selectedNode.summary, targets.length > 1 ? '选择要进入的代码范围' : targets[0]?.key || '外部节点或未绑定代码，不能跳转'].filter(Boolean).join(' · ') :
-      '双击已绑定节点或点击“进入代码”跳转';
+      [selectedNode.summary, targets.map(target => target.key).join('、') || '外部节点或未绑定代码，不能跳转'].filter(Boolean).join(' · ') :
+      '一次展示该模块覆盖的全部代码范围';
     detailSummary.title = detailSummary.textContent;
-    targetSelect.replaceChildren(); targetSelect.hidden = targets.length < 2;
-    if (targets.length > 1) {
-      const placeholder = html('option', '', '选择代码范围…'); placeholder.value = ''; targetSelect.append(placeholder);
-      for (const target of targets) {
-        const option = html('option', '', target.key); option.value = target.key; targetSelect.append(option);
-      }
-      targetSelect.value = selectedNode.chosenTarget || '';
-    }
-    enterButton.disabled = !targets.some(target => target.key === selectedNode.chosenTarget);
   }
-  async function enterNode(node, explicit = false) {
+  async function enterNode(node) {
     selectedNode = node; showDetail(); updateHighlight();
     if (!node.targets.length || !locateModule) return;
-    if (node.targets.length > 1 && !explicit) { targetSelect.focus({ preventScroll: true }); return; }
-    const destination = node.targets.find(target => target.key === node.chosenTarget);
-    if (!destination) { targetSelect.focus({ preventScroll: true }); return; }
+    const destination = node.targets.length === 1 ? node.targets[0].target :
+      { targets: node.targets.map(target => target.target), label: node.label };
     const version = ++navigationVersion, expectedLoad = loadVersion, expectedKey = activeKey;
-    enterButton.disabled = true;
     try {
-      const result = await locateModule(destination.target);
+      const result = await locateModule(destination);
       if (version !== navigationVersion || expectedLoad !== loadVersion || expectedKey !== activeKey) return;
       if (result !== false) {
-        entry = { key: activeKey, id: node.id, target: destination.key };
+        entry = { key: activeKey, id: node.id, targets: node.targets.map(target => target.key) };
         if (expanded) setExpanded(false);
       }
       updateHighlight();
@@ -478,6 +464,7 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     if (selected && typeof selected === 'object' && selected.members?.length) return selected.members.map(modulePath);
     // app 传入选中节点对象；字符串仍按当前层下的节点 ID 兼容。
     if (selected) return [[...parts(location.path), ...parts(typeof selected === 'string' ? selected : selected.id)].join('/')];
+    if (location.scopes?.length) return cachedModulePaths.filter(module => location.scopes.some(scope => contains(key(scope), module)));
     const path = key(location.path);
     // 当前包可能横跨多个更细的职责范围：按实际成员逐一投影，不能只拿包名匹配。
     return path ? cachedModulePaths.filter(module => contains(path, module)) : [];
@@ -507,8 +494,8 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
   }
   function updateHighlight() {
     const current = matchedNodes(locationPaths());
-    const entryPaths = entry && entry.key !== activeKey ? cachedModulePaths.filter(module => contains(entry.target, module)) : [];
-    const entered = entry ? (entry.key === activeKey ? new Set([entry.id]) : matchedNodes(entryPaths.length ? entryPaths : [entry.target])) : new Set();
+    const entryPaths = entry && entry.key !== activeKey ? cachedModulePaths.filter(module => entry.targets.some(target => contains(target, module))) : [];
+    const entered = entry ? (entry.key === activeKey ? new Set([entry.id]) : matchedNodes(entryPaths.length ? entryPaths : entry.targets)) : new Set();
     for (const node of nodes) {
       node.element.classList.toggle('pinned-current', current.has(node.id));
       node.element.classList.toggle('pinned-entry', entered.has(node.id));
@@ -526,7 +513,8 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     host.dataset.mapping = current.size > 1 ? 'multiple' : current.size ? 'matched' : 'unmapped';
   }
   function updateLocation(nextLocation = {}) {
-    location = { path: nextLocation.path || [], selected: nextLocation.selected || null, sourceModule: nextLocation.sourceModule || null };
+    location = { path: nextLocation.path || [], selected: nextLocation.selected || null,
+      sourceModule: nextLocation.sourceModule || null, scopes: nextLocation.scopes || [] };
     updateHighlight();
   }
   function showNotice() {
@@ -647,25 +635,48 @@ export function createPinnedArchitecture({ host, api, locateModule, toast = () =
     else if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomAt(camera.zoom * 1.25); }
     else if (event.key === '-') { event.preventDefault(); zoomAt(camera.zoom / 1.25); }
   });
-  splitter.addEventListener('pointerdown', event => {
+  function beginResize(event) {
     if (event.button !== 0 || expanded || host.classList.contains('pinned-cramped')) return;
-    event.preventDefault(); resizeDrag = { id: event.pointerId, right: host.getBoundingClientRect().right };
-    splitter.setPointerCapture(event.pointerId); host.classList.add('pinned-resizing');
-  });
-  splitter.addEventListener('pointermove', event => {
+    event.preventDefault(); event.stopPropagation();
+    const bounds = host.getBoundingClientRect();
+    resizeDrag = { id: event.pointerId, width: bounds.width, height: bounds.height,
+      x: event.clientX, y: event.clientY, corner: event.currentTarget === corner, handle: event.currentTarget };
+    event.currentTarget.setPointerCapture(event.pointerId); host.classList.add('pinned-resizing');
+  }
+  function moveResize(event) {
     if (!resizeDrag || event.pointerId !== resizeDrag.id) return;
-    setWidth(resizeDrag.right - event.clientX, false);
-  });
+    const limits = sizeLimits();
+    preference.width = clampWidth(resizeDrag.width + resizeDrag.x - event.clientX, limits.width);
+    if (resizeDrag.corner) preference.floatingHeight = Math.min(limits.height,
+      Math.max(PIN_HEIGHT_MIN, resizeDrag.height + event.clientY - resizeDrag.y));
+    layoutFrame();
+  }
   function finishResize(event) {
     if (!resizeDrag || event.pointerId !== resizeDrag.id) return;
+    const { handle } = resizeDrag;
     resizeDrag = null; host.classList.remove('pinned-resizing');
-    if (splitter.hasPointerCapture(event.pointerId)) splitter.releasePointerCapture(event.pointerId);
+    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
     savePreference();
   }
-  splitter.addEventListener('pointerup', finishResize); splitter.addEventListener('pointercancel', finishResize);
+  for (const handle of [splitter, corner]) {
+    handle.addEventListener('pointerdown', beginResize);
+    handle.addEventListener('pointermove', moveResize);
+    handle.addEventListener('pointerup', finishResize);
+    handle.addEventListener('pointercancel', finishResize);
+    handle.addEventListener('lostpointercapture', finishResize);
+  }
   splitter.addEventListener('keydown', event => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault(); setWidth(Number(splitter.getAttribute('aria-valuenow')) + (event.key === 'ArrowLeft' ? 16 : -16));
+  });
+  corner.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation();
+    const bounds = host.getBoundingClientRect(), limits = sizeLimits();
+    preference.width = clampWidth(bounds.width + (event.key === 'ArrowLeft' ? 16 : event.key === 'ArrowRight' ? -16 : 0), limits.width);
+    preference.floatingHeight = Math.min(limits.height, Math.max(PIN_HEIGHT_MIN,
+      bounds.height + (event.key === 'ArrowDown' ? 16 : event.key === 'ArrowUp' ? -16 : 0)));
+    layoutFrame(); savePreference();
   });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && expanded && !document.querySelector('#drawer:not([hidden])')) {

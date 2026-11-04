@@ -383,7 +383,7 @@ body:not(.exploring) .view-grid { display:none; }
 .pinned-architecture { --pin-width:360px; --pin-height:240px; position:absolute; top:8px; right:8px; z-index:4; display:flex; flex-direction:column; width:min(var(--pin-width),calc(100% - 16px)); height:min(var(--pin-height),calc(100% - 16px)); max-height:calc(100% - 16px); min-width:0; min-height:0; background:#f8fbf8f2; border:1px solid #d2dfd5; border-radius:10px; box-shadow:0 12px 32px #2a3d281f; overflow:hidden; }
 .pinned-toolbar { display:flex; flex-shrink:0; flex-wrap:wrap; align-items:center; gap:6px; padding:8px 10px 4px 14px; }
 .pinned-title { flex-shrink:0; font-size:12px; color:var(--green); }
-.pinned-source,.pinned-flow,.pinned-target { min-width:0; padding:4px 6px; font-size:10px; color:#526e5c; background:#fff; }
+.pinned-source,.pinned-flow { min-width:0; padding:4px 6px; font-size:10px; color:#526e5c; background:#fff; }
 .pinned-source { width:108px; }
 .pinned-flow { width:108px; }
 .pinned-tools { display:flex; align-items:center; justify-content:flex-end; gap:4px; margin-left:auto; flex-wrap:wrap; }
@@ -417,14 +417,15 @@ body:not(.exploring) .view-grid { display:none; }
 .pinned-detail-copy { flex:1; min-width:0; display:flex; align-items:baseline; gap:9px; font-size:10px; }
 .pinned-detail-title { flex-shrink:0; max-width:38%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#4f7054; }
 .pinned-detail-summary { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#81937e; }
-.pinned-target { max-width:220px; }
-.pinned-enter { border-color:#bad2bf; background:#eaf3e9; }
-.pinned-footer { display:flex; flex-shrink:0; align-items:center; gap:12px; justify-content:space-between; padding:1px 14px 3px; font-size:9px; color:#8ca087; }
+.pinned-footer { display:flex; flex-shrink:0; align-items:center; gap:12px; justify-content:space-between; padding:1px 14px 3px 20px; font-size:9px; color:#8ca087; }
 .pinned-location { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#547c61; font-weight:500; }
 .pinned-legend { display:flex; align-items:center; gap:12px; white-space:nowrap; }
 .pinned-current-key:before,.pinned-entry-key:before { content:""; display:inline-block; width:10px; height:7px; margin-right:5px; border:2px solid #287350; background:#e1f0e5; }
 .pinned-entry-key:before { border-color:#b17c36; border-style:dashed; background:transparent; }
-.pinned-splitter { position:absolute; inset:0 auto 0 0; width:8px; height:auto; cursor:col-resize; background:transparent; border:0; touch-action:none; }
+.pinned-splitter { position:absolute; inset:0 auto 18px 0; width:8px; height:auto; cursor:col-resize; background:transparent; border:0; touch-action:none; }
+.pinned-resize-corner { position:absolute; left:0; bottom:0; width:18px; height:18px; padding:0; border:0; background:transparent; cursor:nesw-resize; touch-action:none; }
+.pinned-resize-corner:after { content:""; position:absolute; left:4px; bottom:4px; width:9px; height:9px; border-left:2px solid #7e9e86; border-bottom:2px solid #7e9e86; }
+.pinned-resize-corner:hover,.pinned-resize-corner:focus-visible { background:#dce9d7; }
 .pinned-splitter:after { content:""; position:absolute; width:2px; height:36px; left:3px; top:calc(50% - 18px); border-radius:2px; background:#b1c3ac; }
 .pinned-splitter:hover,.pinned-resizing .pinned-splitter { background:#dce9d733; }
 .pinned-resizing { user-select:none; }
@@ -434,6 +435,7 @@ body:not(.exploring) .view-grid { display:none; }
 .pin-expanded .pinned-architecture { position:absolute; inset:0; z-index:6; width:auto; height:auto; max-height:none; border-radius:0; }
 .pin-expanded.map-panel>:not(.map-stage) { visibility:hidden; pointer-events:none; }
 .pin-expanded .map-stage>:not(.pinned-architecture) { visibility:hidden; pointer-events:none; }
+.pinned-cramped .pinned-resize-corner,.pinned-expanded .pinned-resize-corner { display:none; }
 .pinned-expanded .pinned-splitter { display:none; }
 .pinned-expanded .pinned-toolbar { padding:15px 18px 8px; }
 .pinned-expanded .pinned-provenance { padding-left:18px; padding-bottom:8px; }

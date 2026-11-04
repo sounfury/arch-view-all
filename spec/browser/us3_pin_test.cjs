@@ -23,7 +23,7 @@ function projectFixture(directory, name, withFlow = true) {
     fs.mkdirSync(path.dirname(path.join(root, filename)), { recursive: true });
     fs.writeFileSync(path.join(root, filename), content);
   };
-  const roles = modules.map(module => `### ${module} · ${module} 子系统\n\n- **职责**：${module} 的测试业务边界。\n- **实现状态**：已完成。\n\n[探索](#module=${module})\n`).join('\n');
+  const roles = modules.map(module => `### ${module} · ${module} 子系统\n\n- **职责**：${module} 的测试业务边界。\n- **实现状态**：已完成。\n${module === 'aq' ? '- **覆盖范围**：aq/api、scheduler/impl、integration/api/entry\n' : ''}\n[探索](#module=${module})\n`).join('\n');
   write('ARCHITECTURE.md', `# ${name}\n\n真实浏览器验收项目。\n\n${withFlow ? `## 数据流\n\n\`\`\`mermaid\n${flow}\`\`\`\n\n` : ''}## 核心子系统与职责\n\n${roles}`);
   for (const module of modules) {
     write(`src/demo/${module}/api/entry.clj`, `(ns demo.${module}.api.entry${module === 'integration' ? '' : ' (:require [demo.integration.api.entry :as integration])'})\n(defn run [] :ok)\n`);
@@ -124,7 +124,7 @@ function overlapping(a, b) {
 }
 
 // 测试在单个 context 中按顺序进行；各场景进入时显式恢复 UI 状态。
-test('US-3：真实 server 的全局 pin、定位、返回与项目隔离', { timeout: 180000 }, async t => {
+test('US-3：真实 server 的全局 pin、点击导航、缩放与项目隔离', { timeout: 180000 }, async t => {
   assert.equal(nodeLabels.length, 15, '用户原文应为15节点');
   assert.equal((flow.match(/-->/g) || []).length, 24, '用户原文实际24边，不添加臆造关系');
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-view-us3-'));
@@ -145,9 +145,9 @@ test('US-3：真实 server 的全局 pin、定位、返回与项目隔离', { ti
     const url = new URL(response.url()), detail = `HTTP ${response.status()} ${response.url()}`;
     if (documentFault && response.status() === 503 && url.pathname === '/api/document') return;
     // HEAD exploration.js:210-212 对包使用省略公共根的fullName；workspace/resolve-target要求完整包前缀。
-    // 仅排除本夹具已确认的两个既有GET请求，仍校验错误正文；其他所有404均失败。
+    // 仅排除本夹具已确认的三个既有GET请求，仍校验错误正文；其他所有404均失败。
     if (response.request().method() === 'GET' && response.status() === 404 && url.pathname === '/api/notes' &&
-        ['rpc.api', 'integration'].includes(url.searchParams.get('target'))) {
+        ['rpc.api', 'aq.api', 'integration'].includes(url.searchParams.get('target'))) {
       noteChecks.push(response.json().then(body => {
         assert.equal(body.error, `未找到目标：${url.searchParams.get('target')}`);
         unrelatedNotes.push(`${detail} (${body.error})`);
@@ -169,6 +169,7 @@ test('US-3：真实 server 的全局 pin、定位、返回与项目隔离', { ti
     assert.ok(await page.locator('#map-world button.node').count() > 0);
     assert.equal(await page.locator('#zoom-value').textContent(), '100%', '首次进入代码图使用可读比例，而不是适应全图');
     assert.equal(await page.locator('#detail-panel').isVisible(), false, '未选择模块时详情栏不占右侧整列');
+    assert.equal(await page.locator('#pin-target, #pin-enter').count(), 0, '直接点击进入，不再提供代码范围选择和进入按钮');
     const pin = await visibleBounds(page, '#pinned-architecture');
     const map = await visibleBounds(page, '#map-viewport');
     assert.ok(pin.width >= 300 && pin.width <= 440, `浮层宽度应接近 360px，实际 ${pin.width}`);
@@ -201,7 +202,7 @@ test('US-3：真实 server 的全局 pin、定位、返回与项目隔离', { ti
     assert.equal(await page.locator('#pinned-architecture').isVisible(), true);
   });
 
-  await t.test('放大、返回分屏、关闭重开和pin相机操作保持代码相机，控件可访问', async () => {
+  await t.test('放大阅读、关闭重开和pin相机操作保持代码相机，控件可访问', async () => {
     await page.locator('#zoom-in').click();
     const before = await codeCamera(page);
     const pinBefore = await page.locator('#pin-world').evaluate(world => world.style.transform);
@@ -219,7 +220,7 @@ test('US-3：真实 server 的全局 pin、定位、返回与项目隔离', { ti
     await screenshot(page, 'us3-expanded-large-flow');
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.querySelector('#pin-expand').getAttribute('aria-expanded') === 'false');
-    assert.deepEqual(await codeCamera(page), before, '返回分屏后跨下一帧仍保留代码camera');
+    assert.deepEqual(await codeCamera(page), before, '退出放大阅读后跨下一帧仍保留代码camera');
     await page.locator('#pin-close').click();
     assert.equal(await page.locator('#pinned-architecture').isVisible(), false);
     await page.locator('#pin-open').click();
@@ -252,16 +253,50 @@ test('US-3：真实 server 的全局 pin、定位、返回与项目隔离', { ti
     assert.equal(overlapping(await visibleBounds(page, '#pinned-architecture'), await visibleBounds(page, '#map-viewport')), true, '退出全屏后仍是右上角浮层');
   });
 
-  await t.test('业务节点进入包不调用叶子定位API，包级文档切换保持全局来源并支持返回', async () => {
+  await t.test('左下角同时调整宽高，记住尺寸且不越出画布', async () => {
+    const original = await visibleBounds(page, '#pinned-architecture');
+    const before = await codeCamera(page);
+    const corner = await visibleBounds(page, '#pin-resize-corner');
+    const x = corner.x + corner.width / 2, y = corner.y + corner.height / 2;
+    await page.mouse.move(x, y); await page.mouse.down();
+    await page.mouse.move(x - 260, y + 190, { steps: 12 }); await page.mouse.up();
+    const enlarged = await visibleBounds(page, '#pinned-architecture');
+    assert.ok(enlarged.width >= original.width + 240, '左下角向左拖可以超过原来的420px宽度限制');
+    assert.ok(enlarged.height >= original.height + 170, '左下角向下拖增加浮层高度');
+    assert.ok(Math.abs(enlarged.x + enlarged.width - original.x - original.width) < 2, '右上角保持锚定');
+    assert.ok(Math.abs(enlarged.y - original.y) < 2);
+    assert.deepEqual(await codeCamera(page), before, '调整浮层宽高不改变主图相机');
+    await screenshot(page, 'us3-corner-resized');
+    await page.locator('#pin-close').click(); await page.locator('#pin-open').click();
+    const reopened = await visibleBounds(page, '#pinned-architecture');
+    assert.ok(Math.abs(reopened.width - enlarged.width) < 2 && Math.abs(reopened.height - enlarged.height) < 2);
+    await ready(page, proxy.url);
+    await waitForCount(page, '#pinned-architecture .pinned-node', 15);
+    const reloaded = await visibleBounds(page, '#pinned-architecture');
+    assert.ok(Math.abs(reloaded.width - enlarged.width) < 2 && Math.abs(reloaded.height - enlarged.height) < 2, '刷新后恢复该项目浮层宽高');
+    const resizedCorner = await visibleBounds(page, '#pin-resize-corner');
+    await page.mouse.move(resizedCorner.x + 9, resizedCorner.y + 9); await page.mouse.down();
+    await page.mouse.move(0, 1200, { steps: 10 }); await page.mouse.up();
+    const maximum = await visibleBounds(page, '#pinned-architecture'), map = await visibleBounds(page, '#map-viewport');
+    assert.ok(maximum.x >= map.x - 2 && maximum.y + maximum.height <= map.y + map.height + 2, '拖到边界时宽高受画布限制');
+    const maxCorner = await visibleBounds(page, '#pin-resize-corner');
+    await page.mouse.move(maxCorner.x + 9, maxCorner.y + 9); await page.mouse.down();
+    await page.mouse.move(maxCorner.x + 9 + maximum.width - original.width, maxCorner.y + 9 - maximum.height + original.height, { steps: 12 });
+    await page.mouse.up();
+    const restored = await visibleBounds(page, '#pinned-architecture');
+    assert.ok(Math.abs(restored.width - original.width) < 3 && Math.abs(restored.height - original.height) < 3, '可以拖回小浮层');
+  });
+
+  await t.test('点击业务节点直接进入包，无额外返回入口，包级文档保持全局来源', async () => {
     const invalidLocate = [];
     const listen = request => {
       const url = new URL(request.url());
       if (url.pathname === '/api/locate' && url.searchParams.get('module') === 'rpc') invalidLocate.push(url.href);
     };
     page.on('request', listen);
-    const before = await codeCamera(page);
     const globalSvg = await page.locator('#pin-world svg').getAttribute('id');
-    await page.locator('.pinned-node[data-node-id="rpc"]').dblclick();
+    await page.locator('#pin-fit').click();
+    await page.locator('.pinned-node[data-node-id="rpc"]').click();
     await page.locator('#breadcrumbs button').filter({ hasText: /^rpc$/ }).waitFor();
     await page.waitForFunction(() => document.querySelector('#document-select').value.includes('rpc/ARCHITECTURE.md'));
     await pinCurrent(page, 'rpc');
@@ -270,14 +305,14 @@ test('US-3：真实 server 的全局 pin、定位、返回与项目隔离', { ti
     assert.ok((await page.locator('#pin-provenance').textContent()).startsWith('ARCHITECTURE.md'));
     assert.equal(await page.locator('#pinned-architecture .pinned-node').count(), 15);
     assert.deepEqual(invalidLocate, [], 'rpc是包，不得传入只接受叶子的/api/locate');
-    await page.locator('#map-return').click();
+    assert.equal(await page.locator('#map-return').isVisible(), false, '全局模块点击导航不创建临时返回入口');
+    await page.locator('#breadcrumbs button').first().click();
     await page.waitForFunction(() => document.querySelectorAll('#breadcrumbs button').length === 1);
-    assert.deepEqual(await codeCamera(page), before, '临时包跳转返回后保留原代码camera');
     page.off('request', listen);
   });
 
   await t.test('共享依赖的当前节点与进入点独立，源码drawer的Escape优先关闭drawer', async () => {
-    await page.locator('.pinned-node[data-node-id="rpc"]').dblclick();
+    await page.locator('.pinned-node[data-node-id="rpc"]').click();
     await pinCurrent(page, 'rpc');
     await page.locator('#map-world button.node[data-node="api"]').dblclick();
     await page.locator('#map-world button.node[data-node="entry"]').click();
@@ -301,22 +336,51 @@ test('US-3：真实 server 的全局 pin、定位、返回与项目隔离', { ti
     await page.getByRole('button', { name: '关闭链路', exact: true }).click();
   });
 
-  await t.test('外部节点可查看但不可进入，根代码图选中不清除主图trace', async () => {
+  await t.test('外部节点只查看说明，点击根代码节点进入且保留主图trace', async () => {
     await page.locator('#pin-fit').click();
+    const before = await codeCamera(page);
     await page.locator('.pinned-node[data-node-id="external"]').click();
-    assert.equal(await page.locator('#pin-enter').isEnabled(), false);
+    assert.equal(await page.locator('#pin-enter').count(), 0);
     assert.ok((await page.locator('#pin-detail-summary').textContent()).includes('不能跳转'));
+    assert.deepEqual(await codeCamera(page), before, '外部节点不改代码画布');
     await page.locator('#pin-source').selectOption('code');
     await waitForCount(page, '#pinned-architecture .pinned-node', 11);
+    await page.locator('#pin-fit').click();
     await page.locator('#trace-nav [data-trace="us3-shared"]').click();
     await page.locator('#map-world .trace-overlay').waitFor();
-    const traceBefore = await page.locator('#map-world .trace-overlay').evaluate(overlay => overlay.outerHTML);
     await page.locator('.pinned-node[data-node-id="mq"]').click();
-    assert.equal(await page.locator('#map-world .trace-overlay').evaluate(overlay => overlay.outerHTML), traceBefore);
+    await page.locator('#breadcrumbs button').filter({ hasText: /^mq$/ }).waitFor();
     assert.equal(await page.locator('#detail-panel h3').textContent(), 'RPC 到共享集成');
+    assert.equal(await page.locator('#map-return').isVisible(), false);
     await page.getByRole('button', { name: '关闭链路', exact: true }).click();
     await page.locator('#pin-source').selectOption('flow');
     await waitForCount(page, '#pinned-architecture .pinned-node', 15);
+  });
+
+  await t.test('一次点击展示全部覆盖范围，重叠范围去重，保留真实依赖和下钻', async () => {
+    await page.locator('#pin-fit').click();
+    await page.locator('.pinned-node[data-node-id="aq"]').click();
+    await page.locator('#map-world button.node[data-node="aq/api"]').waitFor();
+    const ids = await page.locator('#map-world button.node').evaluateAll(cards => cards.map(card => card.dataset.node).sort());
+    assert.deepEqual(ids, ['aq/api', 'aq/impl', 'integration/api/entry', 'scheduler/impl/service'].sort(), '同时显示本包与额外范围，无重复、无无关兄弟包');
+    assert.equal(await page.locator('#map-world path.edge[data-from="aq/api"][data-to="integration/api/entry"]').count(), 1, '跨范围依赖来自真实源码');
+    assert.equal(await page.locator('#pin-target, #pin-enter').count(), 0);
+    assert.equal(await page.locator('#map-return').isVisible(), false);
+    await pinCurrent(page, 'aq');
+    await page.locator('.pinned-node[data-node-id="aq"].pinned-entry').waitFor();
+    await screenshot(page, 'us3-all-bound-scopes');
+    await page.locator('#map-world button.node[data-node="aq/api"]').dblclick();
+    await page.locator('#map-world button.node[data-node="entry"]').waitFor();
+    assert.deepEqual(await page.locator('#breadcrumbs button').allTextContents(), ['项目', 'aq', 'api']);
+    await page.locator('#map-world button.node[data-node="entry"]').dblclick();
+    await page.locator('#drawer').waitFor({ state: 'visible' });
+    await page.keyboard.press('Escape');
+    await page.locator('#drawer').waitFor({ state: 'hidden' });
+    await page.locator('#pin-fit').click();
+    await page.locator('.pinned-node[data-node-id="mq"]').focus();
+    await page.keyboard.press('Enter');
+    await page.locator('#breadcrumbs button').filter({ hasText: /^mq$/ }).waitFor();
+    assert.deepEqual(await page.locator('#map-world button.node').evaluateAll(cards => cards.map(card => card.dataset.node).sort()), ['api', 'impl'], '下一次普通模块导航不遗留上次范围过滤');
   });
 
   await t.test('同一origin下关闭按项目记忆，其他项目默认开启，缺少数据流回退根图', async () => {
