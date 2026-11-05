@@ -73,6 +73,27 @@ def detekt_config(metric, limit):
     return workflow(result)
 
 
+def gitleaks_config(policy):
+    text = ('# Full default rules; only explicitly reviewed, exact exceptions below.\n'
+            'title = "Full default secret scan"\n[extend]\nuseDefault = true\n')
+    for entry in policy.get("secret_allowlists", []):
+        # Escape literals for RE2; policy values cannot introduce broader regexes.
+        def exact(value):
+            return "^" + "".join("\\" + char if char in r"\.^$*+?{}[]|()" else char
+                                 for char in value) + "$"
+
+        text += "\n[[allowlists]]\n"
+        for key, value in (
+            ("description", entry["description"]),
+            ("condition", "AND"), ("regexTarget", "secret"),
+            ("targetRules", [entry["rule"]]),
+            ("paths", [exact(entry["path"])]),
+            ("regexes", [exact(entry["value"])]),
+        ):
+            text += key + " = " + json.dumps(value, ensure_ascii=False) + "\n"
+    return text
+
+
 def generate(policy):
     profile = policy["profile"]
     limits = policy["limits"]
@@ -129,9 +150,7 @@ def generate(policy):
                                 "--redact=100 --verbose --no-banner --exit-code 1"
                                 for mode in ("git", "dir")]}],
     })
-    files["quality/gitleaks.toml"] = (
-        '# Entire pinned gitleaks default ruleset; no allowlist or baseline.\n'
-        'title = "Full default secret scan"\n[extend]\nuseDefault = true\n')
+    files["quality/gitleaks.toml"] = gitleaks_config(policy)
     files["quality/jscpd.json"] = json.dumps({
         "minLines": 5, "minTokens": 50, "threshold": limits["duplication"],
         "mode": "mild", "noGitignore": True, "maxSize": "1gb",
@@ -146,9 +165,26 @@ def validate(policy):
     if policy.get("version") != 1 or policy.get("profile") not in ("clojure", "kotlin"):
         raise ValueError("Expected version=1 and profile=clojure or kotlin")
     required = {"version", "profile", "sources", "duplication_sources", "limits"}
-    allowed = required | ({"kotlin_classpath"} if policy["profile"] == "kotlin" else set())
+    allowed = required | {"secret_allowlists"}
+    if policy["profile"] == "kotlin":
+        allowed.add("kotlin_classpath")
     if not required.issubset(policy) or not set(policy).issubset(allowed):
         raise ValueError("Unknown or missing policy fields")
+    exceptions = policy.get("secret_allowlists", [])
+    if not isinstance(exceptions, list):
+        raise ValueError("secret_allowlists must be a list")
+    for entry in exceptions:
+        if not isinstance(entry, dict) or set(entry) != {"description", "rule", "path", "value"}:
+            raise ValueError("Each secret exception needs description, rule, path and exact value")
+        if any(not isinstance(value, str) or not value.strip() or
+               any(char in value for char in ("\n", "\r", "\0"))
+               for value in entry.values()):
+            raise ValueError("Secret exceptions must contain non-empty, single-line literals")
+        path = Path(entry["path"])
+        if path.is_absolute() or ".." in path.parts or entry["path"].startswith("-"):
+            raise ValueError("Secret exception paths must be relative project files")
+        if len(entry["value"]) < 8:
+            raise ValueError("Secret exceptions must specify a complete match, not a short keyword")
     if "kotlin_classpath" in policy:
         classpath = policy["kotlin_classpath"]
         if not isinstance(classpath, list) or not classpath or any(

@@ -72,6 +72,14 @@ Clojure 认知复杂度是本模板明确约定的结构指标，不声称与 De
 - 死代码检查只报告 unused binding/private var/namespace/import/referred var；同时保留语法错误和工具故障，其他 lint 维度不冒充死代码。反射和外部动态使用仍需人工判断。
 - 复杂度、参数、嵌套和行数检查生产 Clojure 源码；`duplication_sources` 可单独指定 JS/Python/Java 等生产目录。重复代码使用最少 5 行、50 token。
 
+## 已核实误报的精确豁免
+
+在项目策略 `quality/woodpecker.json` 的可选 `secret_allowlists` 中记录已审查的误报，再运行生成器。每条必须包含 `description`（核查依据）、`rule`（规则 ID）、`path`（完整项目相对路径）和 `value`（扫描器提取的原始字面值，不是正则表达式）。
+
+生成器将路径和值转义并加上首尾锚点，以 `condition = "AND"` 同时限定规则、文件和值；新项目默认没有豁免。本项目只豁免 Mermaid 12.1.0 中已与官方 npm 文件逐字节核对过的一段变量赋值，依据及 SHA-256 保存在策略说明中。
+
+不要把真实凭据写入豁免。凭据应撤销并轮换；误报才使用精确例外。不要用整个 `vendor/` 路径、某类扩展名或关闭 `generic-api-key` 来处理这一项。豁免不依赖行号；该文件内出现其他密钥仍会失败，库升级后匹配内容变了则需要重新核查。
+
 ## 跳过和不阻断
 
 与 ZhiYing 使用相同的手动流水线变量：
@@ -86,6 +94,6 @@ Clojure 认知复杂度是本模板明确约定的结构指标，不声称与 De
 | 死代码 | `SKIP_DEAD_CODE=true` | `DEAD_CODE_NONBLOCK=true` |
 | 重复代码 | `SKIP_DUPLICATION=true` | `DUPLICATION_NONBLOCK=true` |
 
-默认全部阻断。密钥扫描没有跳过或不阻断开关，不生成 allowlist 或 baseline；日志全量脱敏，同时配置完整 Git 历史和工作区扫描。默认规则对第三方压缩文件也可能报警，命中需核查后单独处理，不由模板自动豁免。
+默认全部阻断。密钥扫描没有跳过或不阻断开关，不生成 baseline；日志全量脱敏，同时配置完整 Git 历史和工作区扫描。默认规则对第三方压缩文件也可能报警，只有显式记录在项目策略中的已核实误报才生成精确 allowlist。
 
 接入门禁不会顺便重构现有超标代码。CI 中的红色检查和对应文件行号就是待处理问题；检查器故障、配置错误、没有可分析源码都会失败，不按通过处理。

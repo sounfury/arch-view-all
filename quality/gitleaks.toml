@@ -1,4 +1,12 @@
-# Entire pinned gitleaks default ruleset; no allowlist or baseline.
+# Full default rules; only explicitly reviewed, exact exceptions below.
 title = "Full default secret scan"
 [extend]
 useDefault = true
+
+[[allowlists]]
+description = "Verified Mermaid 12.1.0 upstream code, SHA256 6484afc32872a3aa16cac9a76ba1816a1ed4cc870a6593cc2e17757750f518b2"
+condition = "AND"
+regexTarget = "secret"
+targetRules = ["generic-api-key"]
+paths = ["^src/arch_view/web/assets/vendor/mermaid\\.min\\.js$"]
+regexes = ["^v=m\\.atlasCount$"]

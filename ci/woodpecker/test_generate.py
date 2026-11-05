@@ -2,7 +2,9 @@
 import contextlib
 import io
 import json
+import re
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -45,6 +47,39 @@ class GenerationTest(unittest.TestCase):
         policy = self.policy("kotlin")
         policy["sources"] = ["backend", "shared"]
         self.assertIn("--input backend:shared", generate.generate(policy)[".woodpecker/圈复杂度.yaml"])
+
+    def test_secret_exceptions_are_literal_and_scoped(self):
+        policy = self.policy()
+        self.assertNotIn("allowlists", tomllib.loads(generate.gitleaks_config(policy)))
+        policy["secret_allowlists"] = [{
+            "description": "Reviewed upstream expression",
+            "rule": "generic-api-key",
+            "path": "src/vendor/mermaid.min.js",
+            "value": "v=m.atlasCount",
+        }]
+        generate.validate(policy)
+        config = tomllib.loads(generate.gitleaks_config(policy))
+        self.assertTrue(config["extend"]["useDefault"])
+        allow = config["allowlists"][0]
+        self.assertEqual(allow["condition"], "AND")
+        self.assertEqual(allow["targetRules"], ["generic-api-key"])
+        self.assertEqual(allow["regexTarget"], "secret")
+        self.assertIsNotNone(re.fullmatch(allow["paths"][0], "src/vendor/mermaid.min.js"))
+        self.assertIsNone(re.fullmatch(allow["paths"][0], "src/vendor/other.js"))
+        self.assertIsNotNone(re.fullmatch(allow["regexes"][0], "v=m.atlasCount"))
+        self.assertIsNone(re.fullmatch(allow["regexes"][0], "v=mXatlasCount"))
+        self.assertIsNone(re.fullmatch(allow["regexes"][0], "v=m.atlasCountChanged"))
+
+    def test_incomplete_secret_exceptions_are_rejected(self):
+        for exception in ({"path": "src/vendor.js"}, {
+                "description": "Reviewed", "rule": "generic-api-key",
+                "path": "../outside.js", "value": "v=m.atlasCount"}, {
+                "description": "Reviewed", "rule": "generic-api-key",
+                "path": "src/vendor.js", "value": "key"}):
+            policy = self.policy()
+            policy["secret_allowlists"] = [exception]
+            with self.assertRaises(ValueError):
+                generate.validate(policy)
 
     def test_invalid_policy_fails_before_writing(self):
         for source in ("../outside", "/absolute", "--option"):

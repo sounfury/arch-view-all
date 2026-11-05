@@ -15,5 +15,13 @@
     "params": 5,
     "file-length": 600,
     "duplication": 0
-  }
+  },
+  "secret_allowlists": [
+    {
+      "description": "Verified Mermaid 12.1.0 upstream code, SHA256 6484afc32872a3aa16cac9a76ba1816a1ed4cc870a6593cc2e17757750f518b2",
+      "rule": "generic-api-key",
+      "path": "src/arch_view/web/assets/vendor/mermaid.min.js",
+      "value": "v=m.atlasCount"
+    }
+  ]
 }
