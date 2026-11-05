@@ -1,0 +1,22 @@
+# 职责：在推送和拉取请求时运行 Clojure 与 Node 回归测试。
+when:
+  - event: [push, pull_request, manual]
+
+steps:
+  - name: clojure-tests
+    image: clojure:temurin-25-tools-deps-bookworm-slim
+    environment:
+      ARCH_VIEW_PYTHON: python3
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+    commands:
+      - >-
+        apt-get update && apt-get install -y --no-install-recommends
+        python3 nodejs xvfb xauth libxrender1 libxtst6 libxi6
+        fonts-dejavu-core
+      - xvfb-run -a clojure -J-Xmx768m -M:spec spec/arch_view
+
+  - name: node-tests
+    image: node:22-bookworm-slim
+    commands:
+      - node --test spec/node/*_test.cjs
