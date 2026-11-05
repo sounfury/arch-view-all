@@ -182,3 +182,11 @@ ARCH_VIEW_EDGE_SCOPE=focus
 网页的默认连线范围支持 `focus`（当前模块，默认）和 `all`（全部模块），页面下拉框仍可随时切换。也可通过 `--env-file <文件>` 换用其它配置文件。优先级为 `--edge-scope` 参数 > 进程环境变量 > 配置文件 > 内置默认值。例如：`arch-view serve . --edge-scope all`。
 
 更多参数见 `arch-view --help` 与 `arch-view serve --help`。
+
+---
+
+## 开发与质量检查
+
+[Woodpecker CI](https://ci.oci.sounfury.top/repos/2) 在推送、拉取请求和手动运行时执行回归测试，以及认知复杂度、圈复杂度、嵌套深度、参数个数、文件行数、死代码、重复代码、密钥扫描八项独立检查。默认超标即失败。
+
+阈值在 [`quality/woodpecker.json`](quality/woodpecker.json)，工作流在 [`.woodpecker/`](.woodpecker/)。修改策略后运行 `python3 ci/woodpecker/generate.py --update`；CI 会核对生成结果。Clojure / Kotlin 项目可复用同一个生成器，接入命令、计分口径和手动控制变量见 [Woodpecker 模板说明](ci/woodpecker/README.md)。

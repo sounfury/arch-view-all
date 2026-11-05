@@ -1,0 +1,22 @@
+{
+  "minLines": 5,
+  "minTokens": 50,
+  "threshold": 0,
+  "mode": "mild",
+  "noGitignore": true,
+  "maxSize": "1gb",
+  "reporters": [
+    "console",
+    "threshold"
+  ],
+  "absolute": false,
+  "failOnEmpty": true,
+  "ignore": [
+    "**/.git/**",
+    "**/node_modules/**",
+    "**/build/**",
+    "**/.gradle/**",
+    "**/target/**",
+    "**/__pycache__/**"
+  ]
+}

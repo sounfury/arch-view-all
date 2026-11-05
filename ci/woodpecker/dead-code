@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Report Clojure unused code; retain syntax errors as analysis failures."""
+import json
+import subprocess
+import sys
+
+UNUSED = {
+    "unused-binding", "unused-private-var", "unused-namespace",
+    "unused-import", "unused-referred-var",
+}
+
+
+def main():
+    result = subprocess.run(
+        ["clj-kondo", "--lint", *sys.argv[1:], "--config",
+         '{:output {:format :json} :linters {:unused-private-var {:level :warning}}}'],
+        capture_output=True, text=True, check=False,
+    )
+    try:
+        report = json.loads(result.stdout)
+        findings = report["findings"]
+        files = report["summary"]["files"]
+    except (ValueError, KeyError):
+        print("clj-kondo did not return a valid report", file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        return 1
+    if result.returncode not in (0, 2, 3) or not files:
+        print("clj-kondo failed or found no source files", file=sys.stderr)
+        return 1
+    issues = [item for item in findings
+              if item["type"] in UNUSED or item["type"] == "syntax"]
+    for item in issues:
+        print(f'{item["filename"]}:{item["row"]}:{item["col"]}: '
+              f'{item["message"]} [{item["type"]}]')
+    print(f"dead-code: {files} files, {len(issues)} findings")
+    return 2 if issues else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

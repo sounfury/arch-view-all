@@ -1,0 +1,4 @@
+# Entire pinned gitleaks default ruleset; no allowlist or baseline.
+title = "Full default secret scan"
+[extend]
+useDefault = true

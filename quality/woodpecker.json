@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "profile": "clojure",
+  "sources": [
+    "src"
+  ],
+  "duplication_sources": [
+    "src",
+    "java"
+  ],
+  "limits": {
+    "cognitive": 15,
+    "cyclomatic": 12,
+    "nesting": 4,
+    "params": 5,
+    "file-length": 600,
+    "duplication": 0
+  }
+}

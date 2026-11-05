@@ -14,6 +14,9 @@ steps:
         apt-get update && apt-get install -y --no-install-recommends
         python3 nodejs xvfb xauth libxrender1 libxtst6 libxi6
         fonts-dejavu-core
+      - python3 -m unittest discover -s ci/woodpecker -p 'test_*.py'
+      - python3 ci/woodpecker/generate.py --check
+      - (cd ci/woodpecker && clojure -Srepro -M -m clojure-metrics-test)
       - xvfb-run -a clojure -J-Xmx768m -M:spec spec/arch_view
 
   - name: node-tests

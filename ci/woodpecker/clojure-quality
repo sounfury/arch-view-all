@@ -1,0 +1,5 @@
+#!/bin/sh
+# Keep analyzer dependencies separate from the repository being checked.
+set -eu
+cd /opt/quality
+exec clojure -Srepro -M -m clojure-metrics "$@"
