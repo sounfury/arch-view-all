@@ -26,6 +26,22 @@
 
 (defn stopped? [conn] (not (.isAlive ^Process (:process conn))))
 
+(describe "ACP JSON 传输边界"
+  (it "长字符串和长转义文本不会耗尽正则栈"
+    (doseq [text [(apply str (repeat 10000 "x"))
+                  (apply str (repeat 500000 "x"))
+                  (apply str (repeat 10000 "\"\\\n🙂"))]]
+      (let [encoded (json/write-json {:text text})]
+        (should= nil (#'acp/validate-json-text! encoded))
+        (should= text (get (json/read-json encoded) "text")))))
+
+  (it "长字符串仍拒绝非法转义、原始控制字符和未闭合的引号"
+    (let [prefix (str "\"" (apply str (repeat 10000 "x")))]
+      (doseq [text [(str prefix "\\q\"") (str prefix "\\u12xz\"")
+                    (str prefix "\n\"") prefix (str prefix "\\")]]
+        (should= {:status 502 :reason :invalid-protocol}
+                 (ex-data (caught #(#'acp/validate-json-text! text))))))))
+
 (describe "通用 ACP v1 stdio 客户端"
   (with connections (atom []))
   (after (doseq [conn @@connections] (acp/close! conn)))

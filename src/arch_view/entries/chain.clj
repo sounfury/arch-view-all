@@ -9,16 +9,20 @@
             [clojure.string :as str]))
 
 (declare ^:private resolved-targets ^:private event-targets ^:private call-result ^:private root-of
-         ^:private dispatch-root ^:private traverse ^:private result-data)
+         ^:private dispatch-root ^:private traverse ^:private result-data ^:private method-index ^:private fallback-targets)
 
 (defn build
   "按项目源码类型计算方法调用与出口。入口扫描与 JavacTask 共享规则/源码快照，方法图只在首次请求链路时建立。"
   [ctx analyzed]
-  (let [exit-of (exits/matcher ctx analyzed)
+  (let [analyzed (assoc analyzed :method-index (method-index (:nodes analyzed)))
+        fallback (memoize (fn [receiver method arity] (fallback-targets ctx analyzed receiver method arity)))
+        ctx (assoc ctx :fallback-targets fallback)
+        exit-of (exits/matcher ctx analyzed)
         results (mapv #(call-result ctx analyzed exit-of %) (:calls analyzed))
         nodes (merge (:nodes analyzed) (into {} (keep :terminal results)))
         edges (vec (distinct (mapcat :edges results)))]
-    {:nodes nodes :edges edges :adj (group-by :from edges) :fingerprints (:fingerprints ctx)
+    {:nodes nodes :method-index (:method-index analyzed)
+     :edges edges :adj (group-by :from edges) :fingerprints (:fingerprints ctx)
      :unresolved (group-by :from (keep :unresolved results))}))
 
 (defn handler-root
@@ -31,6 +35,9 @@
   [graph entry {:keys [depth limit] :or {depth 6 limit 60}}]
   (when-not (and (integer? depth) (<= 1 depth 30) (integer? limit) (<= 1 limit 500))
     (throw (ex-info "depth 必须为 1–30，limit 必须为 1–500。" {:status 400})))
+  (when-let [declaration (:declaration entry)]
+    (throw (ex-info "已声明发布入口，但方法继承自外部依赖，当前源码无法定位；请复核外部接口或模板实现。"
+                    {:status 422 :reason (:reason declaration) :declaration declaration})))
   (let [handler (root-of graph entry)
         _ (when-not handler (throw (ex-info "未找到入口对应的方法，请重新加载入口或重新分析项目。" {:status 404})))
         {:keys [graph root]} (dispatch-root graph entry handler)
@@ -48,23 +55,28 @@
 (defn- inherited? [ctx child parent]
   (or (= child parent) (contains? ((:supers ctx) child) parent)))
 
-(defn- fallback-targets [ctx graph {:keys [receiver method args]}]
-  (let [owners (cons receiver (sort ((:supers ctx) receiver)))]
-    (some (fn [type]
-            (let [found (filter #(and (= type (:type %)) (= method (:method %)) (= (count args) (count (:params %))))
-                                (vals (:nodes graph)))]
-              (when (seq found) (mapv :id (sort-by :id found))))) owners)))
+(defn- method-index [nodes]
+  (update-vals (group-by (juxt :type :method #(count (:params %))) (vals nodes))
+               #(mapv :id (sort-by :id %))))
+
+(defn- fallback-targets [ctx graph receiver method arity]
+  (some #(not-empty (get-in graph [:method-index [% method arity]]))
+        (cons receiver (sort ((:supers ctx) receiver)))))
 
 (defn- resolved-targets [ctx graph {:keys [target receiver exact] :as call}]
   (let [node (get-in graph [:nodes target])
         resolved (if (and node (:virtual node) (not exact))
                    (filter (fn [id]
-                             (some #(inherited? ctx % receiver)
-                                   (or (seq (get-in graph [:implementationOwners [target id]]))
-                                       [(get-in graph [:nodes id :type])])))
+                             ;; 模板形参的 CHA 不能把全仓匿名实现混进每个入口；源码回调参数已有显式不确定边。
+                             (and (or (not (get-in ctx [:index :types (get-in graph [:nodes id :type]) :local?]))
+                                      (get-in ctx [:index :types receiver :local?]))
+                                  (some #(inherited? ctx % receiver)
+                                        (or (seq (get-in graph [:implementationOwners [target id]]))
+                                            [(get-in graph [:nodes id :type])]))))
                            (get-in graph [:implementations target]))
                    (when node [target]))
-        chosen (or (seq resolved) (when node [target]) (fallback-targets ctx graph call))]
+        chosen (or (seq resolved) (when node [target])
+                   ((:fallback-targets ctx) receiver (:method call) (count (:args call))))]
     (for [id chosen :let [candidate (get-in graph [:nodes id])
                           reasons (clojure.core/remove nil?
                                                        [(:reason call)
@@ -127,8 +139,10 @@
 
 (defn- root-of [graph entry]
   (let [{:keys [type method params]} (:handler entry)
-        candidates (filter #(and (= type (:type %)) (= method (:method %)) (= (count params) (count (:params %))))
-                           (vals (:nodes graph)))
+        candidates (if-let [index (:method-index graph)]
+                     (map #(get-in graph [:nodes %]) (get index [type method (count params)]))
+                     (filter #(and (= type (:type %)) (= method (:method %)) (= (count params) (count (:params %))))
+                             (vals (:nodes graph))))
         exact (filter #(= (mapv simple-param params) (mapv simple-param (:params %))) candidates)
         located (filter #(= (select-keys (:anchor entry) [:path :startLine])
                             (select-keys (:anchor %) [:path :startLine])) candidates)]

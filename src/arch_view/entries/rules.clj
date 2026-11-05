@@ -7,7 +7,8 @@
             [arch-view.entries.xml-source :as xml]
             [arch-view.workspace :as workspace]
             [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import [javax.lang.model SourceVersion]))
 
 (declare ^:private rule-errors ^:private top-level-errors ^:private role-of ^:private normalize-methods
          ^:private normalize-xml ^:private normalize-dispatch)
@@ -203,6 +204,9 @@
            (let [[k v] (first methods)]
              (case (name k)
                "interfaceMethods" (true? v)
+               "names" (and (sequential? v) (seq v)
+                            (every? #(and (string? %) (SourceVersion/isIdentifier %)
+                                          (not (SourceVersion/isKeyword %))) v))
                ("interfaceFromAttr" "implementsOf" "annotation") (and (string? v) (not (str/blank? v)))
                false)))))
 

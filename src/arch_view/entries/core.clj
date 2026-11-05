@@ -38,7 +38,17 @@
                                                             (:candidates from-xml)))
         found (->> kept (mapcat #(finalize ctx %)) distinct-by-id
                    (sort-by (juxt #(get-in % [:channel :label]) :label :id)) vec)
-        graph (delay ((requiring-resolve 'arch-view.entries.chain/build) ctx (java-calls/analyze ws ctx)))
+        graph (delay
+                (binding [*out* *err*] (println "入口分析：开始构建方法图"))
+                (let [started (System/nanoTime)
+                      analyzed (java-calls/analyze ws ctx)
+                      parsed (System/nanoTime)
+                      _ (binding [*out* *err*]
+                          (println (str "入口分析：Java 调用解析完成（" (quot (- parsed started) 1000000) " ms）")))
+                      built ((requiring-resolve 'arch-view.entries.chain/build) ctx analyzed)]
+                  (binding [*out* *err*]
+                    (println (str "入口分析：方法图构建完成（" (quot (- (System/nanoTime) parsed) 1000000) " ms）")))
+                  built))
         root-of (fn [entry] ((requiring-resolve 'arch-view.entries.chain/handler-root) @graph entry))
         {:keys [entries grouping]} (domains/assign ws (:config loaded) found
                                                  {:impl-edges (impl-edges ctx) :supers (:supers ctx)
@@ -55,9 +65,13 @@
   "解析源码并按规则建立匹配索引；candidates 命令复用。"
   [ws {:keys [rules]}]
   (let [files (java-files ws)
+        started (System/nanoTime)
+        _ (binding [*out* *err*] (println (str "入口分析：解析入口源码（" (count files) " 个文件）")))
         fingerprints (snapshot/capture ws (concat files (rule-inputs ws rules)))
         index (java/scan-files files)
-        _ (snapshot/assert-current! ws fingerprints (keys fingerprints))]
+        _ (snapshot/assert-current! ws fingerprints (keys fingerprints))
+        _ (binding [*out* *err*]
+            (println (str "入口分析：入口源码解析完成（" (quot (- (System/nanoTime) started) 1000000) " ms）")))]
     {:ws ws :index index :rules rules :fingerprints fingerprints
      :file-modules (group-by (comp str val) (get-in ws [:architecture :graph :module->source-file]))
      :by-annotation (group-by #(get-in % [:match :annotation]) (filter #(get-in % [:match :annotation]) rules))
@@ -225,10 +239,23 @@
      :sem (sem-attrs (:rule hit) (:attrs hit)) :via (:via hit)}))
 
 (defn- class-entry-candidates [ctx type hits]
-  (for [hit hits
-        method (methods/select-methods ctx type (get-in hit [:rule :methods]) (:attrs hit))]
-    {:type type :method method :rule (:rule hit) :kind (get-in hit [:rule :kind])
-     :sem (sem-attrs (:rule hit) (:attrs hit))}))
+  (mapcat
+   (fn [{:keys [rule attrs]}]
+     (let [selected (seq (methods/select-methods ctx type (:methods rule) attrs))
+           external (sort (remove #(contains? (get-in ctx [:index :types]) %)
+                                  ((:supers ctx) (:fqn type))))
+           base {:type type :rule rule :kind (:kind rule) :sem (sem-attrs rule attrs)}]
+       (cond
+         selected (map #(assoc base :method %) selected)
+         ;; 类级 RPC 发布事实已确定，但外部依赖的公有模板方法无法从源码定位。
+         (and (= :rpc (:kind rule)) (get-in rule [:match :annotation]) (seq external)
+              (not= "public" (:methods rule))
+              (not-any? #(contains? (:methods rule) %) ["names" "annotation"]))
+         [(assoc base :declaration {:status "unresolved" :reason "external-inherited-method"
+                                   :externalTypes (vec external)}
+                      :warnings ["unresolved-declaration"])]
+         :else [])))
+   hits))
 
 (defn- main-method? [method]
   (and (= "main" (:name method)) (:static? method) (:public? method) (:void? method)
@@ -328,8 +355,10 @@
       (map #(assoc-in candidate [:sem key] %) values)
       [candidate])))
 
-(defn- symbol-name [{:keys [type method]}]
-  (str (:simple type) "#" (:name method)))
+(defn- symbol-name [{:keys [type method declaration]}]
+  (if declaration
+    (str (:simple type) "（入口方法未解析）")
+    (str (:simple type) "#" (:name method))))
 
 (defn- schedule-label [sem]
   (cond (get sem "cron") (str "cron " (get sem "cron"))
@@ -339,7 +368,8 @@
 
 (defn- rpc-label [candidate sem]
   (or (get sem "operation")
-      (when-let [service (get sem "service")] (str (simple-name service) "#" (get-in candidate [:method :name])))))
+      (when-not (:declaration candidate)
+        (when-let [service (get sem "service")] (str (simple-name service) "#" (get-in candidate [:method :name]))))))
 
 (defn- label [candidate sem]
   (or (not-empty (case (:kind candidate)
@@ -367,10 +397,10 @@
   (some #(when (str/starts-with? (str module) (str (:name %) ".")) (:name %))
         (get-in ws [:architecture :guidance :build-modules])))
 
-(defn- entry-id [kind text-label shown {:keys [type method]}]
+(defn- entry-id [kind text-label shown {:keys [type method declaration]}]
   (str (name kind) ":" text-label
        (when (= :mq kind) (str "|" (get shown "consumerGroup") "|" (get shown "tag")))
-       "#" (:fqn type) "." (:name method) "(" (str/join "," (:params method)) ")"))
+       "#" (:fqn type) "." (if declaration "<unresolved>" (:name method)) "(" (str/join "," (:params method)) ")"))
 
 (defn- type-module
   "处理类所属的图节点：同一源码文件里名称与顶层类型一致的模块。"
@@ -393,22 +423,26 @@
         (:doc type))))
 
 (defn- finalize [{:keys [ws] :as ctx} candidate]
-  (for [{:keys [type method kind rule sem] :as candidate} (expand candidate)
+  (for [{:keys [type method kind rule sem declaration] :as candidate} (expand candidate)
         :let [shown (display-sem sem)
               text-label (or (declared/fill-template (:label-template candidate) shown) (label candidate shown))
               path (workspace/relative ws (:file type))
               module (type-module ctx type)]]
+    (cond->
     {:id (entry-id kind text-label shown candidate)
      :kind (name kind) :label text-label :channel (channel candidate)
      :module module :buildModule (build-module ws module)
-     :handler {:type (:fqn type) :method (:name method) :params (:params method)}
-     :anchor {:path path :startLine (:start method) :endLine (:end method) :symbol (symbol-name candidate)}
-     :attrs shown :tags (tags sem) :summary (summary ctx candidate shown)
+     :handler {:type (:fqn type) :method (if declaration "<unresolved>" (:name method)) :params (if declaration [] (:params method))}
+     :anchor {:path path :startLine (:start (or method type)) :endLine (:end (or method type)) :symbol (symbol-name candidate)}
+     :attrs shown :tags (tags sem) :summary (if declaration
+                                             "已声明发布 RPC 服务；入口方法继承自外部依赖，无法定位，需复核。"
+                                             (summary ctx candidate shown))
      :rule (if (= :project (:origin rule)) (:id rule) (str "builtin:" (:id rule)))
      :metaRules (vec (:meta-rules candidate))
      :sources (vec (:sources candidate))
      :warnings (vec (distinct (concat (:warnings candidate)
-                                      (unresolved-warnings (mapcat flat-values (vals sem))))))}))
+                                      (unresolved-warnings (mapcat flat-values (vals sem))))))}
+      declaration (assoc :declaration declaration))))
 
 (defn- impl-edges
   "项目内接口或抽象类只有一个具体实现时，补一条到实现类的边，让归属计算能从接口走到实现。"
@@ -442,12 +476,20 @@
   ["Controller" "Api" "Endpoint" "Facade" "Provider" "Job" "Task" "Listener" "Consumer" "Handler"])
 
 (defn- suspects
-  "类名像入口但没有识别出任何入口的具体类。"
-  [{:keys [ws index]} entries]
+  "未识别入口的具体类，区分入口规则证据和仅名称推断。"
+  [{:keys [ws index] :as ctx} entries]
   (let [handlers (set (concat (map #(get-in % [:handler :type]) entries) (keep :type (mapcat :sources entries))))]
     (->> (vals (:types index))
-         (filter #(and (concrete? %) (not (contains? handlers (:fqn %)))
-                       (let [name (str/replace (:simple %) #"Impl$" "")]
-                         (some (fn [suffix] (str/ends-with? name suffix)) suspect-suffixes))))
-         (map (fn [type] {:type (:fqn type) :location (str (workspace/relative ws (:file type)) ":" (:start type))}))
+         (filter #(and (concrete? %) (not (contains? handlers (:fqn %)))))
+         (keep (fn [type]
+                 (let [name (str/replace (:simple type) #"Impl$" "")
+                       suffix (some #(when (str/ends-with? name %) %) suspect-suffixes)
+                       hits (filter #(#{:entry :http-controller :http-mapping} (get-in % [:rule :role]))
+                                    (concat (class-hits ctx type)
+                                            (mapcat #(method-hits ctx type %) (:methods type))))
+                       ids (vec (sort (distinct (map #(get-in % [:rule :id]) hits))))]
+                   (when (or suffix (seq ids))
+                     {:type (:fqn type) :location (str (workspace/relative ws (:file type)) ":" (:start type))
+                      :evidence (if (seq ids) "framework" "name")
+                      :basis (if (seq ids) ids [suffix])}))))
          (sort-by :type) vec)))

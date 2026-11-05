@@ -3,6 +3,7 @@
 
 (ns arch-view.entries.rules-spec
   (:require [arch-view.entries.fixtures :as fixtures]
+            [arch-view.entries.methods :as methods]
             [arch-view.entries.rules :as sut]
             [arch-view.workspace :as workspace]
             [clojure.string :as str]
@@ -75,6 +76,38 @@
       (should= {:key "{topic}" :handlers {:implements "x.H" :keyMethod "key" :entryMethods {"interfaceMethods" true}}}
                (:dispatch (first (:project good))))))
 
+  (it "兼容原有 methods 写法，并规范化 names 与 XML entryMethods"
+    (doseq [selector [nil "public" {:interfaceMethods true} {:interfaceFromAttr "interfaceType"}
+                      {:implementsOf "x.Handler"} {:annotation "x.Entry"} {:names ["handle" "onEvent"]}]]
+      (let [loaded (load-with {:version 1
+                              :rules [{:id "job" :implements "x.Job" :as "kind:schedule" :methods selector}
+                                      {:id "mq" :as "kind:mq"
+                                       :xml {:files ["spring/*.xml"] :each "consumer" :fields {:bean "@ref"}}
+                                       :dispatch {:key "{bean}" :handlers {:implements "x.Handler" :keyMethod "key"
+                                                                          :entryMethods selector}}}]})
+            normalized (if (map? selector) (update-keys selector name) selector)]
+        (should= "ok" (:status loaded))
+        (should= normalized (:methods (first (:project loaded))))
+        (should= normalized (get-in loaded [:project 1 :dispatch :handlers :entryMethods])))))
+
+  (it "names 必须是非空的合法 Java 方法名数组，且不能混用其它 selector"
+    (doseq [selector (concat (map #(hash-map :names %) [nil "handle" 3 {} [] [nil] [3] [""] [" \t"]
+                                                       ["handle" nil] ["handle" ""] ["handle*"]
+                                                       ["handle(Object)"] [" handle"] ["class"] ["1handle"]])
+                            [{:names ["handle"] :interfaceMethods true}])]
+      (let [loaded (load-with {:version 1
+                              :rules [{:id "job" :implements "x.Job" :as "kind:schedule" :methods selector}
+                                      {:id "mq" :as "kind:mq"
+                                       :xml {:files ["spring/*.xml"] :each "consumer" :fields {:bean "@ref"}}
+                                       :dispatch {:key "{bean}" :handlers {:implements "x.Handler" :keyMethod "key"
+                                                                          :entryMethods selector}}}]})
+            text (str/join "\n" (:errors loaded))]
+        (should= "error" (:status loaded))
+        (should-contain "规则 job：methods 写法无效" text)
+        (should-contain "规则 mq：dispatch.handlers.entryMethods 写法无效" text)
+        (should= [] (:project loaded))
+        (should (some #(= "spring-mvc" (:id %)) (:rules loaded))))))
+
   (it "分组配置逐项校验，写对时原样放在 :config"
     (let [bad (load-with {:version 1 :rules [] :entryLayers "rpc" :domainSubsystems ["aq" 3]
                           :domains [{:id "Order" :color "red" :paths "/api"} {:id "a" :label ""} {:id "a" :topics ["t"]} 5]
@@ -97,3 +130,53 @@
     (let [loaded (load-with "{not json")]
       (should= "error" (:status loaded))
       (should-contain "规则文件无法读取" (first (:errors loaded))))))
+
+(describe "按名称选择入口方法"
+  (with-stubs)
+  (with ctx {:index {:types {}} :supers (stub :supers {:return #{}})})
+  (with handler-type {:fqn "x.Handler"
+              :methods [{:name "handle" :params [] :public? true :override? true}
+                        {:name "handle" :params [{:name "event"}] :public? true}
+                        {:name "handle" :params [{:name "event"} {:name "context"}] :public? false}
+                        {:name "handle" :params [] :public? true :static? true}
+                        {:name "handle" :params [] :public? true :abstract? true}
+                        {:name "onEvent" :params [] :public? true}
+                        {:name "Handle" :params [] :public? true}
+                        {:name "getName" :params [] :public? true :override? true}
+                        {:name "getThreadPool" :params [] :public? true :override? true}
+                        {:name "getHandlerKey" :params [] :public? true :override? true}]})
+
+  (it "精确选择当前类的所有公有非静态非抽象重载，不选择 getter 或同名非 public 方法"
+    (should= [["handle" 0] ["handle" 1] ["onEvent" 0]]
+             (map methods/method-key (methods/select-methods @ctx @handler-type {"names" ["handle" "onEvent"]} {})))
+    (should-not-have-invoked :supers))
+
+  (it "名称不匹配时返回空，不回退到接口或 public 方法，也不支持通配与签名"
+    (doseq [names [["missing"] ["handle*"] ["handle(Object)"]]]
+      (should= [] (methods/select-methods @ctx @handler-type {"names" names} {})))
+    (should-not-have-invoked :supers))
+
+  (it "外部任务接口的七个实现仅生成七个 handle 入口"
+    (let [files (into {} (for [n (range 7)]
+                          [(str "src/main/java/j/Job" n ".java")
+                           (fixtures/java "j" "import external.ISimpleJobHandler;\n"
+                                          "public class Job" n " implements ISimpleJobHandler {\n"
+                                          "  @Override public void handle(Object event) {}\n"
+                                          "  private void handle(String event) {}\n"
+                                          "  protected void handle(Integer event) {}\n"
+                                          "  static void handle(Long event) {}\n"
+                                          "  @Override public String getName() { return \"job\"; }\n"
+                                          "  @Override public Object getThreadPool() { return null; }\n}")]))
+          scanned (fixtures/scan-project files {:version 1
+                                                :rules [{:id "simple-job" :implements "external.ISimpleJobHandler"
+                                                         :as "kind:schedule" :methods {:names ["handle"]}}]})]
+      (should= "ok" (get-in scanned [:rules :status]))
+      (should= 7 (count (:entries scanned)))
+      (should= #{"handle"} (set (map #(get-in % [:handler :method]) (:entries scanned))))))
+
+  (it "保留默认、interfaceMethods 和 public selector 的原有选择行为"
+    (doseq [selector [nil {"interfaceMethods" true}]]
+      (should= ["handle" "getName" "getThreadPool" "getHandlerKey"]
+               (map :name (methods/select-methods @ctx @handler-type selector {}))))
+    (should= ["handle" "handle" "onEvent" "Handle" "getName" "getThreadPool" "getHandlerKey"]
+             (map :name (methods/select-methods @ctx @handler-type "public" {})))))

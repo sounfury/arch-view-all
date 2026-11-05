@@ -92,7 +92,11 @@
     (str (sample entry) "：" (str/join "、" (map :label found)))))
 
 (defn- item [code message items]
-  (when (seq items) {:code code :message message :count (count items) :items (vec (take 10 items))}))
+  (when (seq items) {:code code :message message :count (count items) :items (vec items)}))
+
+(defn- suspect-items [suspects evidence]
+  (for [suspect suspects :when (= evidence (:evidence suspect "name"))]
+    (str (:type suspect) " (" (:location suspect) ")；依据：" (str/join "、" (:basis suspect)))))
 
 (defn- zero-hit [{:keys [entries project-rules]}]
   (let [hit (set (concat (map :rule entries) (mapcat :metaRules entries)))]
@@ -139,10 +143,12 @@
               (item "unresolved-attr" "属性用了无法静态求值的表达式，入口里显示源码原文" (with-warning entries "unresolved-attr"))
               (item "duplicate-route" "同一路由或 operation 出现在多个处理方法，可能前缀没取到" (duplicates entries))
               (item "multi-impl" "接口方法上的入口注解有多个实现类，每个实现各算一个入口" (with-warning entries "multi-impl"))
+              (item "unresolved-declaration" "已声明发布 RPC 服务，但入口方法继承自外部依赖，无法定位；需复核，未将 protected hook 当作入口"
+                    (with-warning entries "unresolved-declaration"))
               (item "no-impl" "接口方法上的入口注解没有项目内实现类" (with-warning entries "no-impl"))
               (item "ambiguous-import" "多个通配导入都可能提供该注解，无法确定全名，未计入入口"
                     (map #(str "@" (:annotation %) " (" (:location %) ")：" (str/join "、" (:candidates %))) ambiguous))
-              (item "suspect" "类名像入口但没有识别出入口，可能缺少规则" (map #(str (:type %) " (" (:location %) ")") suspects))]
+              (item "suspect" "有入口规则证据但未识别出入口：检查方法选择或规则配置" (suspect-items suspects "framework"))]
               (declared-warnings scanned)
               (grouping-warnings scanned)))))
 
@@ -153,9 +159,10 @@
                                              (when-let [group (get-in % [:attrs "consumerGroup"])] (str "[" group "]")))
                                        items)))))
 
-(defn- infos [{:keys [entries overrides grouping] :as scanned}]
+(defn- infos [{:keys [entries overrides grouping suspects] :as scanned}]
   (vec (keep identity
-             [(when grouping (item "subsystems" "接入层与业务子系统的判定" (subsystem-items grouping)))
+             [(item "suspect-name" "仅命名候选：类名像入口，尚无入口规则证据，可能是内部处理器" (suspect-items suspects "name"))
+              (when grouping (item "subsystems" "接入层与业务子系统的判定" (subsystem-items grouping)))
               (when grouping (item "grouping-sources" "各业务分组来源的覆盖情况" (source-items grouping)))
               (when grouping (item "multi-domain" "默认来源下归入多个业务域的入口（每个组下都会出现）" (multi-domain scanned)))
               (item "same-topic" "同一 topic 有多个消费方" (same-topic entries))

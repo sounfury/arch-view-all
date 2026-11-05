@@ -216,7 +216,11 @@ RPC 入口的标签：有 `operation`（网关 operationType、OpenAPI 接口名
 | `when` | 否 | 属性条件，全部满足才命中。键为属性路径，`.` 进入嵌套注解，数组任一元素满足即可；值为字面量（相等）、`{"in": […]}`、`{"not": …}`、`{"present": true}`。例：`{"bindings.bindingType": "tr"}` |
 | `attrs` | 否 | 「注解属性名 → 语义键」，见 §4.4；未写的属性忽略 |
 | `defaults` | 否 | 语义键的默认值，如 `{"httpMethod": "POST"}`（公司注解默认 POST 时） |
-| `methods` | 类级规则用 | 哪些方法算入口：`"public"`（类中声明的公有非静态方法）、`{"interfaceMethods": true}`（实现的项目内接口中声明的方法；外部接口取带 `@Override` 的公有方法）、`{"interfaceFromAttr": "interfaceType"}`（接口由注解属性的 `X.class` 给出）、`{"implementsOf": "<全名>"}`（只取实现该接口的方法）、`{"annotation": "<全名>"}`（只取带该注解的方法） |
+| `methods` | 类级规则用 | 哪些方法算入口：`"public"`（类中声明的公有非静态非抽象方法）、`{"interfaceMethods": true}`（实现的项目内接口中声明的方法；外部接口取带 `@Override` 的公有方法）、`{"interfaceFromAttr": "interfaceType"}`（接口由注解属性的 `X.class` 给出）、`{"implementsOf": "<全名>"}`（只取实现该接口的方法）、`{"annotation": "<全名>"}`（只取带该注解的方法）、`{"names": ["handle"]}`（精确选择当前类声明的 public、非 static、非 abstract 方法及同名重载，避免 getter 被算作入口） |
+
+选择器只能写一种；`names` 必须是非空的合法 Java 方法名数组，不支持通配和方法签名，未匹配时不回退为其它 public 方法。XML `dispatch.handlers.entryMethods` 复用相同选择器与校验。
+
+类级 RPC 发布规则命中、但入口方法只能继承自缺失的外部依赖且源码没有可选方法时，保留 `declaration.status = "unresolved"`、`reason = "external-inherited-method"` 的声明行及类锚点，处理方法标为 `<unresolved>` 并给出 `unresolved-declaration` 警告。声明行计入入口总数，不能视为已定位的生产接口方法；不把 protected hook 当作公开入口。请求该声明的方法链返回 422 与原因，供用户复核外部接口或模板。
 
 方法级注解也在处理方法重写的**项目内接口方法**上查找（如网关的 `@OperationType` 常写在接口上）。入口挂在实现方法上；多个实现各一个入口并带 `multi-impl` 警告，没有实现时挂在接口方法上并带 `no-impl` 警告。
 

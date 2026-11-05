@@ -6,6 +6,7 @@
             [arch-view.entries.report :as report]
             [arch-view.entries.xml-source :as xml]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [speclj.core :refer :all]))
 
 (def ^:private consumer-xml
@@ -98,6 +99,36 @@
       (should= 1 (get-in warnings ["orphan-subscription" :count]))
       (should= 2 (get-in warnings ["duplicate-key" :count]))
       (should-not (some #(= "h.CommonListener" (:type %)) (:suspects @scanned)))))
+
+  (it "entryMethods names 复用方法选择，带 Override 的 key getter 不成为订阅入口"
+    (let [files (update-vals files #(str/replace % "  public String getHandlerKey()"
+                                               "  @Override public String getHandlerKey()"))
+          rules (assoc-in rules [:rules 0 :dispatch :handlers :entryMethods] {:names ["handle"]})
+          scanned (fixtures/scan-project files rules)
+          entries (:entries scanned)]
+      (should= "ok" (get-in scanned [:rules :status]))
+      (should= 4 (count entries))
+      (should= #{"SendPrizeMessageHandler#handle" "CopyHandler#handle" "HealthGiftPackImpl#handle"
+                 "CommonListener#onUniformEvent"}
+               (set (map #(get-in % [:anchor :symbol]) entries)))
+      (should (every? #(some (fn [source] (= "dispatch-key" (:kind source))) (:sources %))
+                      (remove #(some #{"orphan-subscription"} (:warnings %)) entries)))))
+
+  (it "XML 无 dispatch 时也复用 methods names，只选事务回查方法"
+    (let [scanned (fixtures/scan-project
+                   {"src/main/resources/spring/publisher.xml"
+                    "<beans><bean id='callback' class='h.Callback'/><publisher tx-callback='callback'/></beans>"
+                    "src/main/java/h/Callback.java"
+                    (java "h" "public class Callback {\n"
+                          "  public void onUniformEventTxSynchronized(Object event) {}\n"
+                          "  protected void onUniformEventTxSynchronized(String event) {}\n"
+                          "  public String getHandlerKey() { return \"key\"; }\n}")}
+                   {:version 1 :rules [{:id "tx-check" :as "kind:mq"
+                                        :xml {:files ["spring/*.xml"] :each "publisher" :fields {:bean "@tx-callback"}}
+                                        :methods {:names ["onUniformEventTxSynchronized"]}}]})]
+      (should= "ok" (get-in scanned [:rules :status]))
+      (should= ["Callback#onUniformEventTxSynchronized"]
+               (map #(get-in % [:anchor :symbol]) (:entries scanned)))))
 
   (it "bean 找不到类时报告；没有 dispatch 时入口挂在 bean 类上"
     (let [scanned (fixtures/scan-project

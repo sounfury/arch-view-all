@@ -25,7 +25,7 @@
         model (arch/model ws (map :module (remove aside-of entries)) config)
         by-class (architecture-attributor ws model impl-edges)
         by-method (when (and method-graph (seq (:subsystems model)))
-                    (delay (method-attributor model @method-graph method-root)))
+                    (delay (method-attributor model method-graph method-root)))
         by-architecture (if by-method (fn [entry] (@by-method entry)) (fn [entry] (by-class (:module entry))))
         assigned (mapv (fn [entry]
                          (if-let [label (aside-of entry)]
@@ -126,18 +126,19 @@
            :else []))))))
 
 (defn- method-attributor
-  "E1 按入口方法的调用边计算归属，最多 3 跳；保留文档边界，遇到业务子系统或其它绑定即停。"
+  "E1 按入口方法的调用边计算归属，最多 3 跳；只有需沿方法调用归类的接入类才强制建立延迟方法图。"
   [model graph root-of]
   (let [classify (classifier model)
-        method-classify (memoize #(classify (get-in graph [:nodes % :module])))
-        adj (update-vals (:adj graph) #(mapv :to %))
+        method-classify (memoize #(classify (get-in @graph [:nodes % :module])))
+        adj (delay (update-vals (:adj @graph) #(mapv :to %)))
         rank (into {} (map-indexed (fn [i id] [id i])) (:order model))
         domain (fn [id] {:id id :label (get-in model [:subsystems id :label] id)})]
     (fn [entry]
       (let [module (:module entry)
             {:keys [role ids]} (classify module)
-            root (root-of entry)
-            {:keys [found other?]} (when (and root (= :pass role)) (walk adj method-classify root))]
+            root (when (and (= :pass role) (not (:declaration entry)) (get-in entry [:handler :method]))
+                   (root-of entry))
+            {:keys [found other?]} (when root (walk @adj method-classify root))]
         (cond
           (= :business role) (mapv domain (sort-by rank ids))
           (seq found) (mapv domain (sort-by rank found))

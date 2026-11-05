@@ -14,7 +14,7 @@
 
 (def ^:private max-output-bytes (* 1024 1024))
 (def ^:private json-token
-  #"\"(?:[^\"\\\x00-\x1f]|\\(?:[\"\\/bfnrt]|u[0-9a-fA-F]{4}))*\"|true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?(?![0-9.eE+\-])|[{}\[\],:]|[ \t\r\n]+")
+  #"\"(?:[^\"\\\x00-\x1f]|\\(?:[\"\\/bfnrt]|u[0-9a-fA-F]{4}))*+\"|true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?(?![0-9.eE+\-])|[{}\[\],:]|[ \t\r\n]+")
 
 (defn- failure [reason status]
   (ex-info (str "ACP " (name reason)) {:status status :reason reason}))

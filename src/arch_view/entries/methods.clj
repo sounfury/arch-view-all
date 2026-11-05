@@ -1,4 +1,4 @@
-;; 职责：按规则的 methods 写法从处理类中选出入口方法：实现的接口方法、指定接口、带某注解的方法或公有方法。
+;; 职责：按规则的 methods 写法从处理类中选出入口方法：按名称、实现的接口方法、指定接口、带某注解的方法或公有方法。
 ;; 核心入口：选择入口方法（select-methods）；方法签名键（method-key）。
 
 (ns arch-view.entries.methods
@@ -14,11 +14,13 @@
 
 (defn select-methods
   "类级规则的入口方法；未写 methods 时取实现的接口方法，没有接口则取公有方法。
+  names 精确匹配当前类声明的公有非静态非抽象方法，包含全部重载；未命中不回退。
   ctx 需含 :index 与 :supers（全名 → 全部父类型）。"
   [ctx type methods attrs]
   (let [[k v] (when (map? methods) (first methods))]
     (cond
       (= "public" methods) (public-methods type)
+      (= "names" k) (filter (comp (set v) :name) (public-methods type))
       (= "interfaceFromAttr" k) (interface-methods ctx type (let [value (get attrs v)]
                                                               (when (string? (:class value)) (:class value))))
       (= "implementsOf" k) (interface-methods ctx type v)

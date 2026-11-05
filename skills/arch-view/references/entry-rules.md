@@ -15,7 +15,8 @@
    - `zero-hit`：全名、`on` 或 `when` 写错；
    - `unresolved-attr`：属性用了外部常量或方法调用，确认无法静态求值后保留；
    - `duplicate-route`：类前缀没取到，补类级规则的 `attrs`；
-   - `suspect`：读其中一个，判断是漏掉的写法还是误报；
+   - `suspect`：有入口规则证据但未识别出入口，检查方法选择与规则；`suspect-name` 只是按类名推断的信息，先核实是否为内部处理器，不要为消除提示虚构入口。JSON、Markdown 均保留完整候选；
+   - `unresolved-declaration`：类上已声明发布 RPC，但入口方法继承自外部依赖，当前源码无法定位。保留声明并交由用户复核，不把 protected hook 当成公开入口，也不把声明数当作精确方法数；
    - `orphan-subscription` / `unsubscribed-handler` / `duplicate-key`：XML 订阅与 handler key 不一致，这是代码问题，列给用户，不要改规则掩盖；
    - `unclassified`：默认来源下超过 20% 的入口未归类。先看架构文档的子系统是否绑定了代码（`#module=`、覆盖范围）；文档分不出业务时，按 `candidates` 末尾的「未归类入口」统计起草 `domains`，业务名用中文，拿不准的写「待确认」交给用户；
    - `unknown-subsystem` / `domain-zero-hit` / `aside-zero-hit`：id、路径或类名写错。
@@ -37,7 +38,8 @@
      "attrs": {"value": "operation"}},
     {"id": "sofamq", "annotation": "com.xx.mq.MessageConsumer", "as": "kind:mq", "channel": "MQ",
      "attrs": {"topic": "topic", "group": "consumerGroup", "orderly": "flag:顺序消费", "filter": "extra:filter"}},
-    {"id": "simple-job", "implements": "com.xx.job.ISimpleJobHandler", "as": "kind:schedule", "channel": "定时"}
+    {"id": "simple-job", "implements": "com.xx.job.ISimpleJobHandler", "as": "kind:schedule", "channel": "定时",
+     "methods": {"names": ["handle"]}}
   ]
 }
 ```
@@ -47,7 +49,7 @@
 - `on`：`class` 或 `method`，`kind:*` 的注解规则默认 `method`。写在接口方法上的注解会落到项目内实现方法。
 - `attrs`：注解属性名 → 语义键：`prefix` `path` `httpMethod` `cron` `fixedRate` `fixedDelay` `name` `topic` `consumerGroup` `tag` `service` `version` `uniqueId` `operation` `group`（业务分组）`summary`，以及展示标签 `flag:<名称>`、`extra:<名称>`。省略属性名的写法（`@XxGet("/a")`）属性名是 `value`。
 - `when`：属性条件，`.` 进入嵌套注解，数组任一元素满足即可；值可写字面量、`{"in": [...]}`、`{"not": ...}`、`{"present": true}`。
-- `methods`（类级规则）：`"public"`、`{"interfaceMethods": true}`（默认）、`{"interfaceFromAttr": "属性名"}`、`{"implementsOf": "全名"}`、`{"annotation": "全名"}`。
+- `methods`（类级规则）：`"public"`、`{"interfaceMethods": true}`（默认）、`{"interfaceFromAttr": "属性名"}`、`{"implementsOf": "全名"}`、`{"annotation": "全名"}`、`{"names": ["handle"]}`。选择器只写一种；`names` 必须是非空的合法 Java 方法名数组，精确选择当前类声明的 public、非 static、非 abstract 方法及全部同名重载，不支持通配或签名。已知任务/消息方法时优先用 `names`，避免 `getName`、`getThreadPool`、`getHandlerKey` 被算作入口。
 - `defaults`：语义键默认值；`disableBuiltin`：按 id 关闭内置规则。
 - 未知字段、无效取值会报错并指出规则 id；规则只能声明，不能执行代码。
 
@@ -64,11 +66,12 @@
  "label": "{topic} / {eventCode}",
  "dispatch": {"key": "{topic}_{eventCode}",
               "handlers": {"implements": "<handler 接口全名>", "keyMethod": "getHandlerKey",
-                           "entryMethods": {"interfaceMethods": true}}}}
+                           "entryMethods": {"names": ["handle"]}}}}
 ```
 
 - `files` 相对各模块 `src/main/resources`；`each` 第一段在文件任意位置匹配，其后逐段是子元素，元素名按文件写法带前缀。
 - `fields` 相对每个单元：`..` 父元素、`名称` 第一个同名子元素、`@属性` 取值。`bean` 按 XML `<bean>`、`@Service("名")` 或类名首字母小写找到类。
+- `dispatch.handlers.entryMethods` 与 `methods` 使用相同选择器和校验；方法名应按已读样例填写。事务回查也可在 XML 规则写 `"methods": {"names": ["onUniformEventTxSynchronized"]}`。
 - 有 `dispatch` 时，入口挂在 `keyMethod` 返回值（单个 `return` 字面量或常量拼接）与 `key` 一致的 handler 上；对不上时挂在分发者上并报 `orphan-subscription`。没有 `dispatch` 时入口挂在 `bean` 类上，方法按 `methods` 取（可用于 XML 声明的 `<sofa:service>`）。
 
 ## 业务分组
@@ -101,6 +104,8 @@
 ## 方法调用图与出口
 
 网页选择一个入口后，按类分泳道查看这个方法的调用。默认 6 层、60 个方法/出口，可继续展开，最多 30 层、500 个节点。单击节点看详情，双击打开处理方法；调用连线和详情中的文件位置可以打开调用方对应行。虚线会保留多实现、`@Async`、事件发布、回调、反射和按 key 分发的原因，不把这些关系当成确定的执行顺序。
+
+匿名/局部类使用源码位置标识保留重写方法。传入模板的回调实现用虚线连接，并说明是否调用及执行时机尚未确定；不把全仓匿名实现混到每个模板调用里。外部继承声明无法展示精确方法链时会返回专门提示。入口源码解析、Java 调用解析与方法图构建的进度及耗时写入 stderr，不影响 JSON stdout；可直接按架构绑定归类的入口不会触发全仓方法图。
 
 Feign、MyBatis、Spring Data、JDBC、Dubbo/SOFA 引用和常见消息发送器有内置出口规则。公司包装在同一个规则文件的 `rules` 中补 `role: "exit"`，出口不计入入口数量：
 

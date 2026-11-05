@@ -60,7 +60,7 @@
     (when-not entry (throw (ex-info "入口已不存在，请重新加载入口列表。" {:status 404})))
     (locking chains
       (or (get @chains key)
-          (let [result (chain/slice @graph entry options)]
+          (let [result (chain/slice (when-not (:declaration entry) @graph) entry options)]
             ;; 深度/节点上限的不同组合最多缓存 64 份，避免反复展开占用无限内存。
             (when (>= (count @chains) 64) (swap! chains dissoc (first (keys @chains))))
             (swap! chains assoc key result)

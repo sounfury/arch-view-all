@@ -8,7 +8,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [com.sun.source.tree ClassTree CompilationUnitTree IdentifierTree LambdaExpressionTree MemberSelectTree MethodTree
-            MethodInvocationTree MemberReferenceTree NewClassTree Tree Tree$Kind VariableTree]
+            MethodInvocationTree MemberReferenceTree NewClassTree ParenthesizedTree Tree Tree$Kind TypeCastTree VariableTree]
            [com.sun.source.util JavacTask TreePath TreePathScanner Trees]
            [javax.lang.model.element Element ElementKind ExecutableElement Modifier TypeElement VariableElement]
            [javax.lang.model.type TypeKind]
@@ -46,20 +46,20 @@
   (when mirror
     (try (str (.erasure types mirror)) (catch Exception _ (str mirror)))))
 
-(defn- executable-id [types ^ExecutableElement method]
+(defn- executable-id [types owners ^ExecutableElement method]
   (let [owner (.getEnclosingElement method)]
     (when (instance? TypeElement owner)
-      (method-id (str (.getQualifiedName ^TypeElement owner)) (str (.getSimpleName method))
+      (method-id (get owners owner (str (.getQualifiedName ^TypeElement owner))) (str (.getSimpleName method))
                  (map #(erased types (.asType ^VariableElement %)) (.getParameters method))))))
 
 (defn- tree-element [^Trees trees ^TreePath path]
   (try (.getElement trees path) (catch Exception _ nil)))
 
-(defn- tree-type [^Trees trees types ^TreePath path]
+(defn- tree-type [^Trees trees ^Types types owners ^TreePath path]
   (try
     (let [mirror (.getTypeMirror trees path)]
       (when (and mirror (not (#{TypeKind/NONE TypeKind/VOID TypeKind/NULL TypeKind/OTHER} (.getKind mirror))))
-        (erased types mirror)))
+        (or (get owners (.asElement types mirror)) (erased types mirror))))
     (catch Exception _ nil)))
 
 (defn- qualified [ctx owner written]
@@ -88,7 +88,7 @@
 (defn- annotation-names [ctx owner annotations]
   (set (keep #(:fqn (java/annotation-type (:index ctx) owner %)) annotations)))
 
-(defn- declaration [{:keys [ctx types trees] :as env} unit owner ^TreePath path ^MethodTree tree]
+(defn- declaration [{:keys [ctx types trees owners] :as env} unit owner ^TreePath path ^MethodTree tree]
   (let [element (tree-element trees path)
         anchor (tree-anchor env unit tree)]
     (when (and (instance? ExecutableElement element) anchor)
@@ -96,7 +96,7 @@
             params (mapv #(erased types (.asType ^VariableElement %)) (.getParameters ^ExecutableElement element))
             raw (java/method-for owner name params)
             flags (set (.getModifiers ^ExecutableElement element))]
-        {:id (executable-id types element) :type (:fqn owner) :method name :params params
+        {:id (executable-id types owners element) :type (:fqn owner) :method name :params params
          :module (module-of ctx owner) :kind "method" :summary (:doc raw)
          :anchor (assoc anchor :symbol (str (:simple owner) "#" name))
          :abstract (nil? (.getBody tree))
@@ -144,7 +144,21 @@
                         (assoc field :owner fqn)))
             (cons (:fqn owner) (sort ((:supers ctx) (:fqn owner))))))))
 
-(defn- invocation [{:keys [ctx trees types] :as env} unit owner caller path tree]
+(defn- anonymous-body [tree]
+  (cond
+    (instance? NewClassTree tree) (.getClassBody ^NewClassTree tree)
+    (instance? ParenthesizedTree tree) (recur (.getExpression ^ParenthesizedTree tree))
+    (instance? TypeCastTree tree) (recur (.getExpression ^TypeCastTree tree))))
+
+(defn- argument-type [{:keys [ctx trees types owners]} unit owner arg]
+  (or (when-let [body (anonymous-body arg)]
+        (let [path (TreePath/getPath unit body)
+              fqn (when path (java/class-id (.getSourcePositions ^Trees trees) unit path owner))]
+          ;; 缺外部父类时 diamond 匿名表达式可能没有 TypeMirror，但源码类型标识仍可定位。
+          (when (get-in ctx [:index :types fqn]) fqn)))
+      (qualified ctx owner (tree-type trees types owners (TreePath/getPath unit arg)))))
+
+(defn- invocation [{:keys [ctx trees types owners] :as env} unit owner caller path tree]
   (let [element (tree-element trees path)
         executable (when (instance? ExecutableElement element) element)
         expression (receiver-tree tree)
@@ -152,16 +166,16 @@
         receiver-element (when expression-path (tree-element trees expression-path))
         field (when (or (nil? receiver-element) (= ElementKind/FIELD (.getKind ^Element receiver-element)))
                 (receiver-field ctx owner expression))
-        receiver (or (some->> expression-path (tree-type trees types) (qualified ctx owner))
+        receiver (or (some->> expression-path (tree-type trees types owners) (qualified ctx owner))
                      (some->> (:type-name field) (qualified ctx (get-in ctx [:index :types (:owner field)] owner)))
                      (when (instance? NewClassTree tree) (qualified ctx owner (str (.getIdentifier ^NewClassTree tree))))
                      (:fqn owner))
-        target (when executable (executable-id types executable))
+        target (when executable (executable-id types owners executable))
         declared (when executable (some-> (.getEnclosingElement ^ExecutableElement executable) str))
         args (arguments tree)]
     {:from (:id caller) :target target :declaringType declared :receiver receiver :method (called-name tree)
      :args (mapv #(java/eval-tree (:index ctx) owner %) args)
-     :argumentTypes (mapv #(qualified ctx owner (tree-type trees types (TreePath/getPath unit %))) args)
+     :argumentTypes (mapv #(argument-type env unit owner %) args)
      :field field
      :anchor (tree-anchor env unit tree)
      :reason (or (when (instance? MemberReferenceTree tree) "方法引用，执行时机未确定") (deferred-reason path))
@@ -171,8 +185,8 @@
 
 (defn- scan-unit
   "先保存语法树上的方法和调用位置，再进行 attribution；缺依赖时 Javac 可能把 Lambda 体改写为错误节点。"
-  [{:keys [ctx]} ^CompilationUnitTree unit]
-  (let [declarations (atom []) invocations (atom [])
+  [{:keys [ctx trees]} ^CompilationUnitTree unit]
+  (let [declarations (atom []) invocations (atom []) classes (atom [])
         current-type (atom nil) current-method (atom nil)
         record (fn [path tree]
                  (when @current-method
@@ -181,53 +195,54 @@
         scanner (proxy [TreePathScanner] []
                   (visitClass [tree data]
                     (let [previous @current-type previous-method @current-method
-                          name (str (.getSimpleName ^ClassTree tree))
-                          fqn (if previous (str (:fqn previous) "." name)
-                                (str (when (seq (str (.getPackageName unit))) (str (.getPackageName unit) ".")) name))]
+                          path (.getCurrentPath this)
+                          fqn (java/class-id (.getSourcePositions ^Trees trees) unit path previous)]
                       (reset! current-type (get-in ctx [:index :types fqn]))
+                      (when @current-type (swap! classes conj {:path path :owner @current-type}))
                       (reset! current-method nil)
-                      (try (proxy-super visitClass tree data)
+                      (try (.scan ^TreePathScanner this ^Iterable (.getMembers ^ClassTree tree) data)
                            (finally (reset! current-type previous) (reset! current-method previous-method)))))
                   (visitMethod [tree data]
                     (let [previous @current-method]
                       (when @current-type
                         (swap! declarations conj {:unit unit :owner @current-type :path (.getCurrentPath this) :tree tree}))
                       (reset! current-method (when @current-type tree))
-                      (try (proxy-super visitMethod tree data) (finally (reset! current-method previous)))))
+                      (try (.scan ^TreePathScanner this ^Tree (.getBody ^MethodTree tree) data)
+                           (finally (reset! current-method previous)))))
                   (visitLambdaExpression [tree data]
                     (.scan ^TreePathScanner this (.getBody ^LambdaExpressionTree tree) data))
                   (visitMethodInvocation [tree data]
                     (record (.getCurrentPath this) tree)
-                    (let [result (proxy-super visitMethodInvocation tree data)]
-                      ;; 显式扫描回调参数，按调用位置去重后与普通遍历结果合并。
-                      (doseq [arg (.getArguments ^MethodInvocationTree tree)]
-                        (cond
-                          (instance? LambdaExpressionTree arg)
-                          (.scan ^TreePathScanner this (TreePath. (TreePath. (.getCurrentPath this) ^Tree arg)
-                                                                (.getBody ^LambdaExpressionTree arg)) data)
-                          (instance? MemberReferenceTree arg)
-                          (.scan ^TreePathScanner this (TreePath. (.getCurrentPath this) ^Tree arg) data)))
-                      result))
+                    ;; 用 scan(Tree) 保留父路径；proxy-super 还会在递归期间跳过嵌套的同名 visitor。
+                    (.scan ^TreePathScanner this ^Tree (.getMethodSelect ^MethodInvocationTree tree) data)
+                    (.scan ^TreePathScanner this ^Iterable (.getTypeArguments ^MethodInvocationTree tree) data)
+                    (.scan ^TreePathScanner this ^Iterable (.getArguments ^MethodInvocationTree tree) data))
                   (visitNewClass [tree data]
                     (record (.getCurrentPath this) tree)
-                    (proxy-super visitNewClass tree data))
+                    (.scan ^TreePathScanner this ^Tree (.getEnclosingExpression ^NewClassTree tree) data)
+                    (.scan ^TreePathScanner this ^Tree (.getIdentifier ^NewClassTree tree) data)
+                    (.scan ^TreePathScanner this ^Iterable (.getTypeArguments ^NewClassTree tree) data)
+                    (.scan ^TreePathScanner this ^Iterable (.getArguments ^NewClassTree tree) data)
+                    (.scan ^TreePathScanner this ^Tree (.getClassBody ^NewClassTree tree) data))
                   (visitMemberReference [tree data]
                     (record (.getCurrentPath this) tree)
-                    (proxy-super visitMemberReference tree data)))]
+                    (.scan ^TreePathScanner this ^Tree (.getQualifierExpression ^MemberReferenceTree tree) data)
+                    (.scan ^TreePathScanner this ^Iterable (.getTypeArguments ^MemberReferenceTree tree) data)))]
     (.scan ^TreePathScanner scanner unit nil)
-    {:declarations @declarations :invocations @invocations}))
+    {:declarations @declarations :invocations @invocations :classes @classes}))
 
 (defn- implementations
   "按 Javac overrides 计算 CHA，遍历具体类型继承的方法，支持子类实现接口但方法定义在父类的情况。"
-  [ctx ^JavacTask task nodes]
+  [ctx ^JavacTask task owners nodes]
   (let [elements (.getElements task)
         types (.getTypes task)
+        owner-elements (into {} (map (fn [[element fqn]] [fqn element])) owners)
         inherited (for [type (vals (get-in ctx [:index :types]))
                         :when (and (= :class (:kind type)) (not (:abstract? type)))
-                        :let [owner (.getTypeElement elements (:fqn type))] :when owner
+                        :let [owner (get owner-elements (:fqn type))] :when owner
                         member (try (.getAllMembers elements owner) (catch Exception _ []))
                         :when (instance? ExecutableElement member)
-                        :let [id (executable-id types member) node (get nodes id)]
+                        :let [id (executable-id types owners member) node (get nodes id)]
                         :when (and node (not (:abstract node)))]
                     {:owner owner :type (:fqn type) :node node})
         by-name (group-by #(get-in % [:node :method]) inherited)
@@ -241,19 +256,60 @@
      :implementationOwners (into {} (for [[pair items] (group-by (juxt :target :method) pairs)]
                                      [pair (set (map :owner items))]))}))
 
+(defn- callback-method?
+  "只连接匿名/局部类重写的方法；普通 helper 和构造器不代表回调入口。"
+  [{:keys [ctx types elements]} {:keys [type method params abstract element owner-element]}]
+  (let [owner (get-in ctx [:index :types type])
+        flags (set (.getModifiers ^ExecutableElement element))]
+    (and (:local? owner) (not abstract) (not-any? flags [Modifier/STATIC Modifier/PRIVATE])
+         (or (:override? (java/method-for owner method params))
+             (some (fn [parent]
+                     (try
+                       (some (fn [member]
+                               (and (instance? ExecutableElement member)
+                                    (.overrides elements element member owner-element)))
+                             (.getAllMembers elements (.asElement ^Types types parent)))
+                       (catch Exception _ false)))
+                   (.directSupertypes ^Types types (.asType ^TypeElement owner-element)))))))
+
+(defn- callback-calls
+  "保留传入模板的源码回调实现；参数传递不能证明实际调用或执行顺序，因此显式标为不确定。"
+  [callbacks call]
+  (for [type (distinct (:argumentTypes call)) node (get callbacks type)]
+    (assoc call :target (:id node) :declaringType type :receiver type :method (:method node)
+           :args (vec (repeat (count (:params node)) nil)) :argumentTypes (:params node)
+           :field nil :exact true
+           :reason (str (when (:reason call) (str (:reason call) "；"))
+                        "匿名/局部类回调参数，是否调用及执行时机未确定"))))
+
 (defn- analyze-task [ws ctx ^JavacTask task]
   (let [units (vec (.parse task))
-        scanned (mapv #(scan-unit {:ctx ctx} %) units)
+        trees (Trees/instance task)
+        scanned (mapv #(scan-unit {:ctx ctx :trees trees} %) units)
         _ (try (.analyze task) (catch RuntimeException ex
                                (throw (ex-info (str "Java 调用解析失败：" (.getMessage ex)) {:status 422} ex))))
-        env {:ws ws :ctx ctx :trees (Trees/instance task) :types (.getTypes task)}
+        owners (into {} (for [{:keys [path owner]} (mapcat :classes scanned)
+                              :let [element (tree-element trees path)] :when (instance? TypeElement element)]
+                          [element (:fqn owner)]))
+        env {:ws ws :ctx ctx :trees trees :types (.getTypes task) :elements (.getElements task) :owners owners}
         by-tree (into {} (for [{:keys [unit owner path tree]} (mapcat :declarations scanned)
                               :let [node (declaration env unit owner path tree)] :when node] [tree node]))
         nodes (into {} (map (juxt :id identity)) (vals by-tree))
+        implementations (implementations ctx task owners nodes)
+        callbacks (group-by :type (filter #(callback-method? env %) (vals nodes)))
+        callback-ids (set (map :id (mapcat val callbacks)))
         invocations (for [{:keys [unit owner caller path tree written reason]} (mapcat :invocations scanned)
-                          :let [node (get by-tree caller)] :when node]
-                      (cond-> (assoc (invocation env unit owner node path tree) :written written)
-                        reason (assoc :reason reason)))]
+                          :let [node (get by-tree caller)] :when node
+                          :let [call (assoc (invocation env unit owner node path tree) :written written)]]
+                      (cond-> call
+                        reason (assoc :reason (str/join "；" (distinct (remove nil? [(:reason call) reason]))))))
+        invocations (map (fn [call]
+                           (if (and (not (:exact call))
+                                    (not (get-in ctx [:index :types (:receiver call) :local?]))
+                                    (some callback-ids (get-in implementations [:implementations (:target call)])))
+                             (update call :reason #(str (when % (str % "；"))
+                                                       "匿名/局部类回调分派，实际接收者及执行时机未确定"))
+                             call)) invocations)]
     (merge {:nodes (update-vals nodes #(dissoc % :element :owner-element))
-            :calls (vec (distinct invocations))}
-           (implementations ctx task nodes))))
+            :calls (vec (distinct (concat invocations (mapcat #(callback-calls callbacks %) invocations))))}
+           implementations)))

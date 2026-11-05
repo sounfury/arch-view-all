@@ -7,8 +7,8 @@
             [clojure.string :as str])
   (:import [com.sun.source.tree AnnotatedTypeTree AnnotationTree AssignmentTree BinaryTree BlockTree ClassTree
             CompilationUnitTree IdentifierTree ImportTree LiteralTree MemberSelectTree MethodTree
-            NewArrayTree ParameterizedTypeTree ParenthesizedTree ReturnTree Tree Tree$Kind VariableTree]
-           [com.sun.source.util DocTrees JavacTask SourcePositions TreePath Trees]
+            NewArrayTree NewClassTree ParameterizedTypeTree ParenthesizedTree ReturnTree Tree Tree$Kind VariableTree]
+           [com.sun.source.util DocTrees JavacTask SourcePositions TreePath TreePathScanner Trees]
            [javax.lang.model.element Modifier]
            [javax.tools DiagnosticCollector JavaCompiler StandardJavaFileManager StandardLocation ToolProvider]
            [java.nio.charset StandardCharsets]))
@@ -23,6 +23,20 @@
     {:types {} :packages {}}
     (let [{:keys [units positions docs]} (parse-units files)]
       (build-index (mapcat #(unit-types positions docs %) units)))))
+
+(defn class-id
+  "两次 Javac 解析共享的源码类型标识；匿名/局部类用起始字符位置消除空名和同名冲突。"
+  [^SourcePositions positions ^CompilationUnitTree unit ^TreePath path owner]
+  (let [^ClassTree tree (.getLeaf path)
+        simple (str (.getSimpleName tree))
+        parent (.getLeaf (.getParentPath path))
+        member? (or (instance? ClassTree parent) (instance? CompilationUnitTree parent))
+        position (.getStartPosition positions unit tree)
+        name (cond (str/blank? simple) (str "$anonymous@" position)
+                   member? simple
+                   :else (str simple "@" position))
+        package (str (.getPackageName unit))]
+    (str (when-let [prefix (or (:fqn owner) (not-empty package))] (str prefix ".")) name)))
 
 (defn resolve-type
   "按源码写法解析类型全名：单类型导入、同文件类型、同包类型、java.lang 常用类型、通配导入，最后回退到同包。
@@ -219,16 +233,30 @@
            :ctx ctx :outers outers :start (line tree) :end (line tree :end))))
 
 (defn- collect-classes
-  "展开顶层类型和嵌套类型，返回 [全名 外层全名列表 树] 序列。"
-  [package ^CompilationUnitTree unit]
-  (letfn [(walk [outers fqn ^ClassTree tree]
-            (cons [fqn outers tree]
-                  (mapcat (fn [member]
-                            (when (instance? ClassTree member)
-                              (walk (cons fqn outers) (str fqn "." (.getSimpleName ^ClassTree member)) member)))
-                          (.getMembers tree))))]
-    (mapcat #(when (instance? ClassTree %) (walk () (qualify package (str (.getSimpleName ^ClassTree %))) %))
-            (.getTypeDecls unit))))
+  "展开所有源码类型；成员类型保留全名，匿名/局部类型使用稳定源码位置标识及词法作用域。"
+  [positions ^CompilationUnitTree unit]
+  (let [classes (atom []) current (atom nil)
+        scanner (proxy [TreePathScanner] []
+                  (visitClass [tree data]
+                    (let [previous @current
+                          path (.getCurrentPath this)
+                          fqn (class-id positions unit path previous)
+                          simple (str (.getSimpleName ^ClassTree tree))
+                          parent (.getLeaf (.getParentPath path))
+                          local? (or (:local? previous)
+                                     (not (or (instance? ClassTree parent) (instance? CompilationUnitTree parent))))
+                          owner {:fqn fqn :outers (if previous (cons (:fqn previous) (:outers previous)) ())
+                                 :tree tree :simple simple :local? local? :anonymous? (str/blank? simple)
+                                 :anonymous-super (when (instance? NewClassTree parent)
+                                                    (type-name (.getIdentifier ^NewClassTree parent)))
+                                 :source-start (.getStartPosition ^SourcePositions positions unit tree)}]
+                      (swap! classes conj owner)
+                      (reset! current owner)
+                      ;; proxy-super 会在递归期间暂时禁用同名代理，导致嵌套类跳过 visitClass。
+                      (try (.scan ^TreePathScanner this ^Iterable (.getMembers ^ClassTree tree) data)
+                           (finally (reset! current previous))))))]
+    (.scan ^TreePathScanner scanner unit nil)
+    @classes))
 
 (defn- line-fn [^SourcePositions positions ^CompilationUnitTree unit]
   (let [lines (.getLineMap unit)]
@@ -245,11 +273,20 @@
 
 (defn- unit-types [positions docs ^CompilationUnitTree unit]
   (let [base (import-context unit)
-        classes (collect-classes (:package base) unit)
-        ctx (assoc base :local-types (into {} (map (fn [[fqn]] [(last-segment fqn) fqn])) classes))
+        classes (collect-classes positions unit)
+        named-types (remove :local? classes)
+        local-types (into {} (map (juxt :simple :fqn)) named-types)
         file (.getCanonicalPath (io/file (.toUri (.getSourceFile unit))))
         env {:line (line-fn positions unit) :doc (doc-fn docs unit)}]
-    (map (fn [[fqn outers tree]] (class-data env file ctx (vec outers) fqn tree)) classes)))
+    (map (fn [{:keys [fqn outers tree local? anonymous? anonymous-super source-start]}]
+           (let [scopes (set (cons fqn outers))
+                 visible (filter #(scopes (:fqn %)) classes)
+                 ctx (assoc base :local-types (merge local-types
+                                                    (into {} (for [type visible :when (seq (:simple type))]
+                                                               [(:simple type) (:fqn type)]))))]
+             (cond-> (assoc (class-data env file ctx (vec outers) fqn tree) :source-start source-start)
+               local? (assoc :local? true)
+               anonymous? (assoc :anonymous? true :simple (last-segment fqn) :super-names [anonymous-super])))) classes)))
 
 (defn- build-index [types]
   (let [index {:types (into {} (map (juxt :fqn identity)) types)
