@@ -44,6 +44,13 @@ function check(value, atime = first, mtime = second) {
   assert(value.isDirectory());
 }
 
+function checkNativeMtime(file, expected) {
+  const actual = fs.lstatSync(file).mtimeMs;
+  // Native utimes can truncate fractional seconds to microsecond precision.
+  assert.ok(Math.abs(actual - expected.getTime()) <= 0.001,
+    `native mtime ${actual} differs from ${expected.getTime()}`);
+}
+
 async function originalBehavior(file) {
   if (sandboxed) {
     assert.throws(() => fs.utimesSync(file, first, second), { code: 'EPERM' });
@@ -51,11 +58,11 @@ async function originalBehavior(file) {
     await assert.rejects(fs.promises.utimes(file, first, second), { code: 'EPERM' });
   } else {
     fs.utimesSync(file, first, second);
-    assert.equal(fs.lstatSync(file).mtimeMs, second.getTime());
+    checkNativeMtime(file, second);
     await utimes(file, second, first);
-    assert.equal(fs.lstatSync(file).mtimeMs, first.getTime());
+    checkNativeMtime(file, first);
     await fs.promises.utimes(file, first, second);
-    assert.equal(fs.lstatSync(file).mtimeMs, second.getTime());
+    checkNativeMtime(file, second);
   }
 }
 
@@ -158,7 +165,7 @@ test('host locks, sibling directories, ordinary files and symlink escapes use or
     await assert.rejects(fs.promises.utimes(escape, first, second), { code: 'EPERM' });
   } else {
     await utimes(escape, first, second);
-    assert.equal(fs.statSync(hostLock).mtimeMs, second.getTime());
+    checkNativeMtime(hostLock, second);
   }
   assert.equal(fs.statSync(escape).mtimeMs, fs.statSync(hostLock).mtimeMs);
   const replaced = lock('replaced-by-link');
