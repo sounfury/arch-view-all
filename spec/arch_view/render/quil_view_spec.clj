@@ -15,27 +15,6 @@
       (should= 2 (count (:module-positions scene)))
       (should= 1 (count (:edge-drawables scene)))))
 
-  (it "computes arrowhead geometry and line endpoint"
-    (let [right (sut/arrowhead-points 0 0 10 0 :standard)
-          up (sut/arrowhead-points 0 10 0 0 :closed-triangle)]
-      (should= [10 0] (:tip right))
-      (should= [0.0 0.0] (:center right))
-      (should= [0 0] (:tip up))
-      (should= [0.0 10.0] (:center up))
-      (should= [10 0] (sut/edge-line-endpoint 0 0 10 0 :standard))
-      (should= [0.0 0.0] (sut/edge-line-endpoint 0 0 10 0 :closed-triangle))))
-
-  (it "offsets dependency start and tip points"
-    (should= [100.0 112.0] (sut/dependency-tip-point 100 200 100 100))
-    (should= [100.0 188.0] (sut/dependency-tip-point 100 100 100 200))
-    (should= [100.0 188.0] (sut/dependency-start-point 100 200 100 100))
-    (should= [100.0 112.0] (sut/dependency-start-point 100 100 100 200)))
-
-  (it "abbreviates and strips top namespace"
-    (should= "b.c.core" (sut/abbreviate-module-name "app.backend.cache.core"))
-    (should= "j.alice" (sut/abbreviate-module-name "bob.jim.alice.clj"))
-    (should= "beta.module" (sut/strip-top-namespace "alpha.beta.module")))
-
   (it "finds hovered module and layer labels"
     (let [modules [{:module "alpha.beta.core" :label "a.b.core" :x 100.0 :y 50.0}]
           layers [{:index 0 :x 0.0 :y 0.0 :width 100.0 :height 60.0 :label "alpha" :full-name "alpha"}]]

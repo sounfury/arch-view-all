@@ -19,10 +19,6 @@
             [quil.core :as q]
             [quil.middleware :as m]))
 
-(defn abbreviate-module-name
-  [module]
-  (functional/abbreviate-module-name module))
-
 (defn strip-top-namespace
   [module]
   (functional/strip-top-namespace module))
@@ -44,7 +40,6 @@
 (def ^:private toolbar-height 38.0)
 (def ^:private back-button-width 360.0)
 (def ^:private reanalyze-button-width 180.0)
-(def ^:private declutter-button-width 240.0)
 (def ^:private button-height 26.0)
 
 (def declutter-modes functional/declutter-modes)
@@ -58,7 +53,7 @@
   (functional/declutter-label mode))
 
 (defn- back-button-label
-  [{:keys [namespace-path nav-stack]}]
+  [{:keys [namespace-path]}]
   (if-not (seq namespace-path)
     "Back"
     (str "Back: " (last (vec namespace-path)))))
@@ -66,11 +61,6 @@
 (defn- back-button-rect
   []
   {:x 10.0 :y 6.0 :width back-button-width :height button-height})
-
-(defn- declutter-button-rect
-  []
-  (let [{:keys [x width]} (back-button-rect)]
-    {:x (+ x width 10.0) :y 6.0 :width declutter-button-width :height button-height}))
 
 (defn- reanalyze-button-label
   [{:keys [reanalyze-status]}]
@@ -99,50 +89,6 @@
    (functional/build-scene architecture {:canvas-width canvas-width
                                          :layer-height layer-height
                                          :layer-gap layer-gap})))
-
-(defn arrowhead-points
-  [x1 y1 x2 y2 arrowhead]
-  (let [dx (- x2 x1)
-        dy (- y2 y1)
-        len (max 0.001 (Math/sqrt (+ (* dx dx) (* dy dy))))
-        ux (/ dx len)
-        uy (/ dy len)
-        back 10.0
-        half 5.0
-        bx (- x2 (* ux back))
-        by (- y2 (* uy back))
-        px (- uy)
-        py ux]
-    {:tip [x2 y2]
-     :center [bx by]
-     :left [(+ bx (* px half)) (+ by (* py half))]
-     :right [(- bx (* px half)) (- by (* py half))]
-     :closed? (= :closed-triangle arrowhead)}))
-
-(defn edge-line-endpoint
-  [x1 y1 x2 y2 arrowhead]
-  (let [{:keys [tip center closed?]} (arrowhead-points x1 y1 x2 y2 arrowhead)]
-    (if closed?
-      center
-      tip)))
-
-(def ^:private label-clearance 12.0)
-
-(defn dependency-tip-point
-  [x1 y1 x2 y2]
-  (let [dy (- y2 y1)]
-    (cond
-      (> dy 0.1) [(double x2) (- (double y2) label-clearance)]
-      (< dy -0.1) [(double x2) (+ (double y2) label-clearance)]
-      :else [(double x2) (double y2)])))
-
-(defn dependency-start-point
-  [x1 y1 x2 y2]
-  (let [dy (- y2 y1)]
-    (cond
-      (> dy 0.1) [(double x1) (+ (double y1) label-clearance)]
-      (< dy -0.1) [(double x1) (- (double y1) label-clearance)]
-      :else [(double x1) (double y1)])))
 
 (defn hovered-module
   [module-positions mx my]
@@ -232,7 +178,7 @@
   (dependency-indicators/dependency-indicators scene declutter-mode strip-top-namespace))
 
 (defn- draw-toolbar
-  [{:keys [namespace-path nav-stack reload-architecture reanalyze-status] :as state}]
+  [{:keys [namespace-path nav-stack reload-architecture reanalyze-status]}]
   (canvas/draw-toolbar {:namespace-path namespace-path
                         :nav-stack nav-stack
                         :reload-architecture reload-architecture
@@ -262,7 +208,7 @@
   (events/dependency-tooltip-key dependency))
 
 (defn hovered-dependency-for-state
-  [{:keys [scene declutter-mode scroll-x scroll-y zoom] :as state}]
+  [{:keys [scene declutter-mode scroll-x scroll-y zoom]}]
   (let [mx (double (q/mouse-x))
         my (double (q/mouse-y))]
     (when-not (point-in-toolbar? mx my)
@@ -286,11 +232,10 @@
                                        :vertical-scrollbar-visible? vertical-visible?})))
 
 (defn- draw-scene
-  [{:keys [scene declutter-mode scroll-x scroll-y viewport-height viewport-width zoom] :as state}]
+  [state]
   (text-rendering/configure-text!)
   (canvas/draw-scene state
-                     {:scaled-content-height scaled-content-height
-                      :point-in-toolbar? point-in-toolbar?
+                     {:point-in-toolbar? point-in-toolbar?
                       :dependency-indicators dependency-indicators
                       :hovered-dependency hovered-dependency
                       :hovered-module-position hovered-module-position
@@ -332,7 +277,7 @@
                               :clamp-scroll-x clamp-scroll-x}))
 
 (defn handle-mouse-wheel
-  [{:keys [scene scroll-y viewport-height viewport-width zoom] :as state} event]
+  [state event]
   (events/handle-mouse-wheel state event
                              {:scaled-content-width scaled-content-width
                               :scaled-content-height scaled-content-height
@@ -343,7 +288,7 @@
                               :hovered-dependency hovered-dependency}))
 
 (defn handle-mouse-pressed
-  [{:keys [scene scroll-y viewport-height viewport-width zoom] :as state} event]
+  [state event]
   (events/handle-mouse-pressed state event
                                {:scaled-content-width scaled-content-width
                                 :scaled-content-height scaled-content-height
@@ -354,7 +299,7 @@
                                 :point-in-rect? point-in-rect?}))
 
 (defn handle-mouse-dragged
-  [{:keys [scene viewport-height dragging-scrollbar? drag-offset zoom] :as state} event]
+  [state event]
   (events/handle-mouse-dragged state event
                                {:scaled-content-width scaled-content-width
                                 :scaled-content-height scaled-content-height
@@ -367,18 +312,8 @@
   [mx my]
   (events/point-in-toolbar? mx my toolbar-height))
 
-(defn- apply-toolbar-click
-  [state event]
-  (events/apply-toolbar-click state event
-                              {:point-in-rect? point-in-rect?
-                               :back-button-rect back-button-rect
-                               :reanalyze-button-rect (when (:reload-architecture state) reanalyze-button-rect)
-                               :reanalyze-state start-reanalyze-state
-                               :drilldown-scene drilldown-scene
-                               :toolbar-height toolbar-height}))
-
 (defn handle-mouse-released
-  [{:keys [dragging-scrollbar?] :as state} event]
+  [state event]
   (events/handle-mouse-released state event
                                 {:point-in-rect? point-in-rect?
                                  :back-button-rect back-button-rect
@@ -472,7 +407,7 @@
            :reanalyze-started-at (current-time-ms))))
 
 (defn- push-nav-state
-  [{:keys [namespace-path scroll-x scroll-y nav-stack] :as state}]
+  [state]
   (scene-state/push-nav-state state))
 
 (defn show!

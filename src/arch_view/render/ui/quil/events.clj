@@ -166,7 +166,7 @@
     (open-source-file-window! source-file)))
 
 (defn zoom-out-at-screen-pos
-  [{:keys [zoom zoom-stack scene viewport-height viewport-width] :as state} screen-x screen-y
+  [{:keys [zoom-stack] :as state} screen-x screen-y
    {:keys [scaled-content-width scaled-content-height clamp-scroll clamp-scroll-x]}]
   (let [stack (vec (or zoom-stack []))]
     (when (seq stack)
@@ -182,7 +182,7 @@
   (logic/point-in-toolbar? mx my toolbar-height))
 
 (defn toolbar-click-target
-  [state mx my {:keys [point-in-rect? back-button-rect reanalyze-button-rect toolbar-height]}]
+  [state mx my {:keys [point-in-rect? back-button-rect reanalyze-button-rect]}]
   (cond
     (and (seq (:namespace-path state))
          (point-in-rect? (back-button-rect) mx my)) :back
@@ -276,7 +276,7 @@
                :zoom-stack (pop stack))))))
 
 (defn apply-zoom-click
-  [{:keys [zoom zoom-stack scene viewport-height] :as state} event
+  [state event
    {:keys [scaled-content-height clamp-scroll]}]
   (if-not (control-down? event)
     nil
@@ -320,7 +320,7 @@
      (mapv :text (:tooltip-lines dependency))]))
 
 (defn hovered-dependency-at-event
-  [{:keys [scene declutter-mode scroll-x scroll-y zoom] :as state} event
+  [{:keys [scene declutter-mode scroll-x scroll-y zoom]} event
    {:keys [point-in-toolbar? dependency-indicators hovered-dependency]}]
   (let [[mx my] (mouse-pos event)]
     (when-not (point-in-toolbar? mx my)
@@ -343,7 +343,7 @@
       :else state)))
 
 (defn handle-mouse-wheel
-  [{:keys [scene scroll-y viewport-height viewport-width zoom] :as state} event
+  [state event
    {:keys [scaled-content-width scaled-content-height clamp-scroll clamp-scroll-x
            point-in-toolbar? dependency-indicators hovered-dependency]}]
   (let [state (sync-viewport-size state {:scaled-content-width scaled-content-width
@@ -380,7 +380,7 @@
                :viewport-width (:viewport-width state))))))
 
 (defn handle-mouse-pressed
-  [{:keys [scene scroll-y viewport-height viewport-width zoom] :as state} event
+  [state event
    {:keys [scaled-content-width scaled-content-height clamp-scroll clamp-scroll-x
            scrollbar-rect horizontal-scrollbar-rect point-in-rect?]}]
   (let [state (sync-viewport-size state {:scaled-content-width scaled-content-width
@@ -410,7 +410,7 @@
       :else state)))
 
 (defn handle-mouse-dragged
-  [{:keys [scene viewport-height dragging-scrollbar? drag-offset zoom] :as state} event
+  [{:keys [dragging-scrollbar? drag-offset] :as state} event
    {:keys [scaled-content-width scaled-content-height clamp-scroll clamp-scroll-x
            thumb-y->scroll thumb-x->scroll]}]
   (let [state (sync-viewport-size state {:scaled-content-width scaled-content-width

@@ -122,7 +122,7 @@
      (* (- ax bx) (- py by))))
 
 (defn- point-in-triangle?
-  [mx my [[ax ay :as a] [bx by :as b] [cx cy :as c]]]
+  [mx my [a b c]]
   (let [p [mx my]
         d1 (triangle-sign p a b)
         d2 (triangle-sign p b c)

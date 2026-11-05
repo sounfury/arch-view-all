@@ -9,6 +9,8 @@
     (should= "u.core" (sut/abbreviate-module-name "empire.ui.core"))
     (should= "u.core" (sut/abbreviate-module-name "empire.ui.core.cljc"))
     (should= "u.core" (sut/abbreviate-module-name "empire.ui.core|file"))
+    (should= "b.c.core" (sut/abbreviate-module-name "app.backend.cache.core"))
+    (should= "j.alice" (sut/abbreviate-module-name "bob.jim.alice.clj"))
     (should= "module" (sut/abbreviate-module-name "module")))
 
   (it "strips top namespace and computes rendered labels"
@@ -25,7 +27,9 @@
     (should= ["movement_" "resolution"]
              (sut/split-label-lines "movement_resolution" 16))
     (should= ["alpha-beta" "gamma"]
-             (sut/split-label-lines "alpha-beta.gamma" 12)))
+             (sut/split-label-lines "alpha-beta.gamma" 12))
+    (should= ["alpha_" "beta"]
+             (sut/split-label-lines "alpha_beta" 9)))
 
   (it "falls back to hard split when no separators are available"
     (should= ["abcdef" "ghijkl"]

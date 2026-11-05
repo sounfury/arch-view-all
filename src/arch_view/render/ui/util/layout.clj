@@ -416,8 +416,8 @@
 (defn build-scene
   ([architecture]
    (build-scene architecture {}))
-  ([architecture {:keys [canvas-width layer-height layer-gap]
-                  :or {canvas-width 1200 layer-height 140 layer-gap 24}}]
+  ([architecture {:keys [canvas-width layer-height]
+                  :or {canvas-width 1200 layer-height 140}}]
    (let [{:keys [layers layer-by-index row-by-layer-index peer-by-layer-index module->component layer->label module->kind module->cycle?
                  module->leaf? module->source-file module->full-name module->display-label]}
          (scene-inputs architecture)

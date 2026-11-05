@@ -9,7 +9,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [com.sun.source.tree ClassTree CompilationUnitTree IdentifierTree LambdaExpressionTree MemberSelectTree MethodTree
-            MethodInvocationTree MemberReferenceTree NewClassTree ParenthesizedTree Tree Tree$Kind TypeCastTree VariableTree]
+            MethodInvocationTree MemberReferenceTree NewClassTree ParenthesizedTree Tree Tree$Kind TypeCastTree]
            [com.sun.source.util JavacTask TreePath TreePathScanner Trees]
            [javax.lang.model.element Element ElementKind ExecutableElement Modifier TypeElement VariableElement]
            [javax.lang.model.type TypeKind]

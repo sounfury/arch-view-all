@@ -8,22 +8,6 @@
   (:import [javax.swing JFrame JEditorPane JScrollPane SwingUtilities]
            [java.awt Dimension]))
 
-(defn html-escape
-  [s]
-  (source-html/html-escape s))
-
-(defn colorize-clojure-html
-  [source]
-  (source-html/colorize-clojure-html source))
-
-(defn expand-tabs
-  [line]
-  (source-html/expand-tabs line))
-
-(defn source-lines->html
-  [source]
-  (source-html/source-lines->html source))
-
 (defn source->html
   [title source]
   (source-html/source->html title source))

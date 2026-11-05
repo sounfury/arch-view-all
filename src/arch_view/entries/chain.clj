@@ -4,7 +4,6 @@
 (ns arch-view.entries.chain
   (:refer-clojure :exclude [remove])
   (:require [arch-view.entries.exits :as exits]
-            [arch-view.entries.java-calls :as calls]
             [arch-view.entries.java-source :as java]
             [clojure.string :as str]))
 

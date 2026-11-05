@@ -63,7 +63,7 @@
       (q/text line x (+ y (* (- idx mid) line-height))))))
 
 (defn draw-scene-content
-  [scene viewport-width dependency-indicators {:keys [rendered-label rendered-label-lines draw-dependency-indicators]}]
+  [scene _viewport-width dependency-indicators {:keys [rendered-label rendered-label-lines draw-dependency-indicators]}]
   (q/background 250 250 250)
   (doseq [layer-rect (:layer-rects scene)]
     (draw-layer-rect! layer-rect))
@@ -219,17 +219,6 @@
     (q/fill 120 120 120)
     (q/rect x y width height)))
 
-(defn- world-bounds
-  [sx sy viewport-width viewport-height z]
-  (let [world-left (/ sx z)
-        world-right (/ (+ sx (double viewport-width)) z)
-        world-top (/ sy z)
-        world-bottom (/ (+ sy (double viewport-height)) z)]
-    {:min-x (+ world-left (/ 14.0 z))
-     :max-x (- world-right (/ 20.0 z))
-     :min-y (+ world-top (/ 14.0 z))
-     :max-y (- world-bottom (/ 14.0 z))}))
-
 (defn- draw-zoomed-scene
   [scene viewport-width dependency-indicators z sx sy {:keys [draw-scene-content]}]
   (q/background 250 250 250)
@@ -262,12 +251,11 @@
   (if (:drillable? hovered-module) :cross :arrow))
 
 (defn draw-scene
-  [{:keys [scene declutter-mode scroll-x scroll-y viewport-height viewport-width zoom] :as state}
-   {:keys [scaled-content-height point-in-toolbar? module-point-map dependency-indicators
+  [{:keys [scene declutter-mode scroll-x scroll-y viewport-width zoom] :as state}
+   {:keys [point-in-toolbar? dependency-indicators
            hovered-dependency hovered-module-position hovered-layer-label
            draw-scene-content draw-toolbar draw-tooltip draw-tooltip-lines draw-scrollbars]}]
   (let [z (double (or zoom 1.0))
-        content-height (scaled-content-height scene z)
         mx (double (q/mouse-x))
         my (double (q/mouse-y))
         interactive-canvas? (not (point-in-toolbar? mx my))

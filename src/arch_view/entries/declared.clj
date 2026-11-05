@@ -6,7 +6,6 @@
             [arch-view.entries.methods :as methods]
             [arch-view.entries.xml-source :as xml]
             [arch-view.workspace :as workspace]
-            [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [java.beans Introspector]))
 

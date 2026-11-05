@@ -1,18 +1,10 @@
-;; 回归测试：检查桌面窗口关闭后的等待流程是否符合已有行为。
+;; 回归测试：检查桌面窗口创建、重新分析和尺寸变化是否符合已有行为。
 
 (ns arch-view.render.ui.quil.view-wait-spec
   (:require [arch-view.render.ui.quil.view :as sut]
-            [arch-view.render.ui.util.quil-lifecycle :as lifecycle]
             [speclj.core :refer :all]))
 
-(describe "quil view helper coverage"
-  (it "delegates wait-until-closed to lifecycle utility"
-    (let [called? (atom nil)]
-      (with-redefs [lifecycle/wait-until-closed! (fn [sketch]
-                                                   (reset! called? sketch))]
-        (sut/wait-until-closed! :s))
-      (should= :s @called?)))
-
+(describe "quil view lifecycle and reanalysis"
   (it "builds sketch options in show"
     (let [captured (atom nil)
           scene {:layer-rects [{:x 0.0 :y 0.0 :width 300.0 :height 120.0}]
