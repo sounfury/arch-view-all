@@ -3,6 +3,7 @@
 
 (ns arch-view.entries.java-calls
   (:require [arch-view.entries.java-source :as java]
+            [arch-view.entries.method-contracts :as contracts]
             [arch-view.entries.source-snapshot :as snapshot]
             [arch-view.workspace :as workspace]
             [clojure.java.io :as io]
@@ -94,7 +95,8 @@
     (when (and (instance? ExecutableElement element) anchor)
       (let [name (str (.getName tree))
             params (mapv #(erased types (.asType ^VariableElement %)) (.getParameters ^ExecutableElement element))
-            raw (java/method-for owner name params)
+            start (.getStartPosition (.getSourcePositions ^Trees trees) unit tree)
+            raw (some #(when (= start (:source-start %)) %) (:methods owner))
             flags (set (.getModifiers ^ExecutableElement element))]
         {:id (executable-id types owners element) :type (:fqn owner) :method name :params params
          :module (module-of ctx owner) :kind "method" :summary (:doc raw)
@@ -102,7 +104,7 @@
          :abstract (nil? (.getBody tree))
          :virtual (not (or (= "<init>" name) (some flags [Modifier/STATIC Modifier/PRIVATE Modifier/FINAL])))
          :annotations (annotation-names ctx owner (concat (:annotations owner) (:annotations raw)))
-         :element element :owner-element (.getEnclosingElement ^ExecutableElement element)}))))
+         :raw raw :element element :owner-element (.getEnclosingElement ^ExecutableElement element)}))))
 
 (defn- deferred-reason [^TreePath path]
   (loop [parent (.getParentPath path)]
@@ -256,13 +258,30 @@
      :implementationOwners (into {} (for [[pair items] (group-by (juxt :target :method) pairs)]
                                      [pair (set (map :owner items))]))}))
 
+(defn- method-documentation
+  "方法图使用 Javac 的真实 overrides 关系，泛型替换和同参重载不依赖简单名猜测。"
+  [{:keys [ws ctx elements]} nodes]
+  (let [by-type-name (group-by (juxt :type :method) (vals nodes))]
+    (update-vals
+     nodes
+     (fn [{:keys [type method raw element owner-element] :as node}]
+       (let [owner (get-in ctx [:index :types type])
+             inherited (for [parent ((:supers ctx) type)
+                             candidate (get by-type-name [parent method])
+                             :when (and (:raw candidate)
+                                        (try (.overrides elements element (:element candidate) owner-element)
+                                             (catch Exception _ false)))]
+                         {:type (get-in ctx [:index :types parent]) :method (:raw candidate)})
+             docs (contracts/describe ws (:index ctx) owner raw inherited nil)]
+         (merge node docs {:implementationAnchor (when-not (:abstract node) (:anchor node))}))))))
+
 (defn- callback-method?
   "只连接匿名/局部类重写的方法；普通 helper 和构造器不代表回调入口。"
-  [{:keys [ctx types elements]} {:keys [type method params abstract element owner-element]}]
+  [{:keys [ctx types elements]} {:keys [type raw abstract element owner-element]}]
   (let [owner (get-in ctx [:index :types type])
         flags (set (.getModifiers ^ExecutableElement element))]
     (and (:local? owner) (not abstract) (not-any? flags [Modifier/STATIC Modifier/PRIVATE])
-         (or (:override? (java/method-for owner method params))
+         (or (:override? raw)
              (some (fn [parent]
                      (try
                        (some (fn [member]
@@ -294,7 +313,7 @@
         env {:ws ws :ctx ctx :trees trees :types (.getTypes task) :elements (.getElements task) :owners owners}
         by-tree (into {} (for [{:keys [unit owner path tree]} (mapcat :declarations scanned)
                               :let [node (declaration env unit owner path tree)] :when node] [tree node]))
-        nodes (into {} (map (juxt :id identity)) (vals by-tree))
+        nodes (method-documentation env (into {} (map (juxt :id identity)) (vals by-tree)))
         implementations (implementations ctx task owners nodes)
         callbacks (group-by :type (filter #(callback-method? env %) (vals nodes)))
         callback-ids (set (map :id (mapcat val callbacks)))
@@ -310,6 +329,6 @@
                              (update call :reason #(str (when % (str % "；"))
                                                        "匿名/局部类回调分派，实际接收者及执行时机未确定"))
                              call)) invocations)]
-    (merge {:nodes (update-vals nodes #(dissoc % :element :owner-element))
+    (merge {:nodes (update-vals nodes #(dissoc % :element :owner-element :raw))
             :calls (vec (distinct (concat invocations (mapcat #(callback-calls callbacks %) invocations))))}
            implementations)))

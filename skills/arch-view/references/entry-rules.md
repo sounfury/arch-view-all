@@ -16,6 +16,7 @@
    - `unresolved-attr`：属性用了外部常量或方法调用，确认无法静态求值后保留；
    - `duplicate-route`：类前缀没取到，补类级规则的 `attrs`；
    - `suspect`：有入口规则证据但未识别出入口，检查方法选择与规则；`suspect-name` 只是按类名推断的信息，先核实是否为内部处理器，不要为消除提示虚构入口。JSON、Markdown 均保留完整候选；
+   - `ambiguous-doc` / `ambiguous-contract`：多个接口或父类的说明或契约来源冲突，按候选锚点复核，不通过复制注释到 Impl 消除问题；
    - `unresolved-declaration`：类上已声明发布 RPC，但入口方法继承自外部依赖，当前源码无法定位。保留声明并交由用户复核，不把 protected hook 当成公开入口，也不把声明数当作精确方法数；
    - `orphan-subscription` / `unsubscribed-handler` / `duplicate-key`：XML 订阅与 handler key 不一致，这是代码问题，列给用户，不要改规则掩盖；
    - `unclassified`：默认来源下超过 20% 的入口未归类。先看架构文档的子系统是否绑定了代码（`#module=`、覆盖范围）；文档分不出业务时，按 `candidates` 末尾的「未归类入口」统计起草 `domains`，业务名用中文，拿不准的写「待确认」交给用户；
@@ -35,7 +36,7 @@
      "as": "kind:rpc", "channel": "RPC-TR", "when": {"bindings.bindingType": "tr"},
      "attrs": {"interfaceType": "service"}, "methods": {"interfaceFromAttr": "interfaceType"}},
     {"id": "mobilegw", "annotation": "com.xx.gw.OperationType", "as": "kind:rpc", "channel": "RPC-网关",
-     "attrs": {"value": "operation"}},
+     "attrs": {"value": "operation", "name": "name", "desc": "summary"}},
     {"id": "sofamq", "annotation": "com.xx.mq.MessageConsumer", "as": "kind:mq", "channel": "MQ",
      "attrs": {"topic": "topic", "group": "consumerGroup", "orderly": "flag:顺序消费", "filter": "extra:filter"}},
     {"id": "simple-job", "implements": "com.xx.job.ISimpleJobHandler", "as": "kind:schedule", "channel": "定时",
@@ -104,6 +105,8 @@
 ## 方法调用图与出口
 
 网页选择一个入口后，按类分泳道查看这个方法的调用。默认 6 层、60 个方法/出口，可继续展开，最多 30 层、500 个节点。单击节点看详情，双击打开处理方法；调用连线和详情中的文件位置可以打开调用方对应行。虚线会保留多实现、`@Async`、事件发布、回调、反射和按 key 分发的原因，不把这些关系当成确定的执行顺序。
+
+RPC 注解与业务 Javadoc 只在接口上时，仍关联到真实实现。按规则映射 `name` 为业务名、`desc` 为入口说明；卡片保留技术方法名和 operation，分别提供“查看接口定义／查看实现”。实现方法有有效 Javadoc 时，方法说明优先使用它；否则回退到当前入口实际命中的契约。普通中间方法按真实重写关系回退；说明冲突时展示候选。不要要求用户把接口注释或注解复制到 Impl。
 
 匿名/局部类使用源码位置标识保留重写方法。传入模板的回调实现用虚线连接，并说明是否调用及执行时机尚未确定；不把全仓匿名实现混到每个模板调用里。外部继承声明无法展示精确方法链时会返回专门提示。入口源码解析、Java 调用解析与方法图构建的进度及耗时写入 stderr，不影响 JSON stdout；可直接按架构绑定归类的入口不会触发全仓方法图。
 

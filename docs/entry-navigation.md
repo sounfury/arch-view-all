@@ -139,16 +139,19 @@ E1 取代 [US-2 叶子全链路](navigation-ux-stories.md)：入口链路是方�
 | `module` | 处理类对应的图节点名，可直接传给 `/api/locate` |
 | `anchor` | 处理方法的区间，格式同 `arch-view.anchor`（输出时不带 `hash`，另存为链路时再补） |
 | `attrs` | 规则抽取出的属性，键名见 §4.4 |
-| `summary` | 入口说明，来源顺序见 E0-11 |
+| `summary` | 入口说明，来源顺序见 E0-11；接口契约与实现说明的分离规则见 [RPC 契约元数据](rpc-contract-metadata.md) |
+| `businessName` | 当前入口映射出的业务名；列表与根卡片优先展示，同时保留技术身份 |
+| `docSource` / `contractAnchor` / `implementationAnchor` | 说明来源、契约位置、真实实现位置，分别保留；中间实现方法也可沿真实重写关系回退说明 |
+| `methodSummary` / `docStatus` / `docCandidates` | 方法 Javadoc 与来源状态；说明冲突时列候选，不按父类型名称任取一个 |
 | `tags` | 展示用标签，如「顺序消费」「广播」「filter=new」，来自规则 `attrs` 的 `flag:` / `extra:` 映射 |
 | `channel` | 二级接入机制；`source` 为 `rule`（项目规则）、`builtin`（内置规则默认名）或 `kind`（按入口类型） |
 | `domains` | 各来源得出的业务域，键为 `rules`、`architecture`、`annotation`、`inferred`，没有结果的来源省略（即该来源下「未归类」）；同一来源多个值即多归属。`architecture` 的 `id` 为子系统标识，供网页在钉住的架构上高亮；`{"id": "_infra", "label": "基础设施/其它"}` 表示只落在非业务子系统。下划线开头的 id 保留给这类特殊组 |
 | `aside` | 可选。命中规则 `aside` 时为分组名，此时没有 `domains` |
 | `rule` | 命中的规则 id；内置规则为 `builtin:<id>` |
 | `warnings` | 本入口的问题，如 `unresolved-attr`（属性用了解析不了的表达式） |
-| `sources` | 可选。入口声明分在多处时列出各处锚点：`{"kind": "xml" \| "dispatcher" \| "dispatch-key", "anchor": {…}}`，见 §4.7 |
+| `sources` | 可选。入口声明分在多处时列出各处锚点：`{"kind": "xml" \| "dispatcher" \| "dispatch-key" \| "contract", "anchor": {…}}`；`contract` 记录当前入口实际命中的接口或父类声明，XML 见 §4.7 |
 
-`id` 由 `kind`、规范化标签和处理方法组成，同一源码重复分析时保持稳定，用于网页记住选中项和另存链路。消息入口的标签包含 topic、group 和 tag，同一 topic 的多个消费方（如主链路与只落库分支）是不同入口；一个类订阅多个 topic 时每个订阅一个入口。
+`id` 由 `kind`、规范化标签、完整处理方法签名和规则标识组成，同一源码与规则重复分析时保持稳定，用于网页记住选中项和另存链路。规则标识区分同一实现以相同 operation 暴露到不同机制的入口。消息入口的标签包含 topic、group 和 tag，同一 topic 的多个消费方（如主链路与只落库分支）是不同入口；一个类订阅多个 topic 时每个订阅一个入口。
 
 RPC 入口的标签：有 `operation`（网关 operationType、OpenAPI 接口名）时用它，否则用「接口#方法」。
 
@@ -519,7 +522,7 @@ XML 路径以实际文件为准。没有 bean 名到调用字段的明确关联�
 ## 8. 实现要点
 
 - **E0 不改已有依赖图**。入口注解、常量和 Javadoc 用一次只解析语法的 JavacTask；E1 另建隔离 classpath 的 JavacTask 做方法符号归属与类型层次分析，关闭注解处理、不生成 class、不执行目标代码。有架构绑定时方法图用于入口分组，否则在首次打开调用链时建立；网页在同一份分析状态内复用这份图。`POST /api/entries/reload` 重读规则和源码、使方法图与子图缓存一起失效，不重算原来的类级架构分析。Kotlin 支持尚未实现。
-- **入口说明**：源码语法树用 `DocTrees` 读取 Javadoc，复用 `web/javadoc.clj` 提取首句；优先 `summary` 属性，其次方法 Javadoc（自身没有时查对应父类型方法），最后处理类 Javadoc。没有说明时留空。
+- **入口说明**：源码语法树用 `DocTrees` 读取 Javadoc，复用 `web/javadoc.clj` 提取首句；列表优先 `summary` 属性，其次方法有效 Javadoc，最后处理类 Javadoc。调用图中方法自身 Javadoc 优先于继承说明；当前入口元数据仅作用于它的响应切片，保留业务名、接口契约与实现的独立锚点。多接口、完整参数重载、泛型替换、歧义和覆盖策略见 [RPC 契约元数据](rpc-contract-metadata.md)。没有说明时留空。
 - 命令与其它 AI 探索子命令一致，项目目录用 `--project-path` 指定。
 - **E1 方法调用解析**：
   - Java：`visitMethodInvocation` / `visitNewClass` / `visitMemberReference` 取 `ExecutableElement`，用擦除后的完整参数类型区分重载；缺依赖导致符号不完整时，只按已声明接收者的项目内方法匹配并标虚线。普通外部或未解析调用不扩展，在详情中列出；识别到的出口和反射目标单独显示。

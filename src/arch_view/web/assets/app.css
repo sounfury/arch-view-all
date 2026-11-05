@@ -121,10 +121,15 @@ body:not(.exploring) .detail-open,body.map-fullscreen .detail-open,body:has(.pin
 .chain-legend { margin-left:auto; }
 .chain-lane { position:absolute; top:12px; border:1px solid #dce7dc; border-radius:10px; background:#f1f6ee99; }
 .chain-lane h3 { margin:0; padding:12px; border-bottom:1px solid #dce7dc; font:600 13px var(--body); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.chain-node { position:absolute; display:flex; flex-direction:column; justify-content:center; align-items:flex-start; gap:3px; padding:10px 12px; border:1px solid #cadcc9; border-radius:8px; background:#fff; color:var(--ink); text-align:left; box-shadow:0 2px 6px #25473208; }
-.chain-node strong,.chain-node>span { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chain-node { position:absolute; display:flex; flex-direction:column; justify-content:center; align-items:flex-start; gap:6px; padding:10px 12px; border:1px solid #cadcc9; border-radius:8px; background:#fff; color:var(--ink); text-align:left; box-shadow:0 2px 6px #25473208; }
+.chain-node-select { display:flex; flex:1; flex-direction:column; justify-content:center; align-items:flex-start; gap:3px; width:100%; min-width:0; padding:0; border:0; background:transparent; color:inherit; text-align:left; }
+.chain-node-select strong,.chain-node-select>span,.chain-doc-source { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .chain-node strong { font-size:12px; }
-.chain-node>span { font-size:10px; color:var(--muted); }
+.chain-node-select>span { font-size:10px; color:var(--muted); }
+.chain-technical-name { font-family:var(--mono); }
+.chain-doc-source { color:#62806c; font-size:10px; }
+.chain-node-actions { display:flex; flex:none; flex-wrap:wrap; gap:12px; font-size:10px; }
+.chain-node-actions .text-button { font-size:10px; }
 .chain-node-kind { color:#62806c; font:10px var(--body); }
 .chain-node.root { border-left:4px solid var(--green); }
 .chain-node.exit { border-color:#d8b77c; background:#fffaf0; }

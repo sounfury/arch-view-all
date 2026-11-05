@@ -7,6 +7,7 @@
             [arch-view.entries.java-source :as java]
             [arch-view.entries.java-calls :as java-calls]
             [arch-view.entries.methods :as methods]
+            [arch-view.entries.method-contracts :as contracts]
             [arch-view.entries.rules :as rules]
             [arch-view.entries.source-snapshot :as snapshot]
             [arch-view.entries.xml-source :as xml]
@@ -166,18 +167,15 @@
             (for [rule (:type-rules ctx) :when (type-rule-hit? supers rule)] {:rule rule :attrs {}}))))
 
 (defn- inherited-hits
-  "处理方法重写的项目内父类型方法上的注解命中，附 :via 记录来源接口。"
+  "按完整签名与泛型替换匹配父声明，保留当前规则实际命中的契约。"
   [ctx type method]
-  (for [super ((:supers ctx) (:fqn type))
-        :let [parent (get-in ctx [:index :types super])]
-        :when parent
-        parent-method (:methods parent)
-        :when (= (methods/method-key parent-method) (methods/method-key method))
+  (for [{parent :type parent-method :method :as contract} (contracts/inherited-methods (:index ctx) type method)
         hit (element-hits ctx parent (:annotations parent-method) :method)]
-    (assoc hit :via [super (methods/method-key method)])))
+    (assoc hit :via (contracts/declaration-key parent parent-method) :contract contract :annotation-source contract)))
 
 (defn- method-hits [ctx type method]
-  (concat (element-hits ctx type (:annotations method) :method)
+  (concat (map #(assoc % :annotation-source {:type type :method method})
+               (element-hits ctx type (:annotations method) :method))
           (when-not (:static? method) (inherited-hits ctx type method))))
 
 (defn- sem-attrs
@@ -231,12 +229,15 @@
                                      (concat class-hits mappings)))
                    {"httpMethod" (str verb) "path" (join-path (text prefix) (text path))})
        :warnings (unresolved-warnings [prefix path])
-       :via (some :via mappings)})))
+       :via (some :via mappings)
+       :contract (some :contract (filter #(= (:id rule) (get-in % [:rule :id])) mappings))
+       :annotation-source (some :annotation-source (filter #(= (:id rule) (get-in % [:rule :id])) mappings))})))
 
 (defn- method-entry-candidates [type method hits]
   (for [hit hits]
     {:type type :method method :rule (:rule hit) :kind (get-in hit [:rule :kind])
-     :sem (sem-attrs (:rule hit) (:attrs hit)) :via (:via hit)}))
+     :sem (sem-attrs (:rule hit) (:attrs hit)) :via (:via hit)
+     :contract (:contract hit) :annotation-source (:annotation-source hit)}))
 
 (defn- class-entry-candidates [ctx type hits]
   (mapcat
@@ -244,7 +245,8 @@
      (let [selected (seq (methods/select-methods ctx type (:methods rule) attrs))
            external (sort (remove #(contains? (get-in ctx [:index :types]) %)
                                   ((:supers ctx) (:fqn type))))
-           base {:type type :rule rule :kind (:kind rule) :sem (sem-attrs rule attrs)}]
+           base {:type type :rule rule :kind (:kind rule) :sem (sem-attrs rule attrs)
+                 :annotation-source {:type type :method nil}}]
        (cond
          selected (map #(assoc base :method %) selected)
          ;; 类级 RPC 发布事实已确定，但外部依赖的公有模板方法无法从源码定位。
@@ -302,13 +304,13 @@
     (for [type (vals (get-in ctx [:index :types]))
           :when (= :interface (:kind type))
           method (:methods type)
-          :when (not (contains? implemented [(:fqn type) (methods/method-key method)]))
+          :when (not (contains? implemented (contracts/declaration-key type method)))
           hit (:entry (by-role (element-hits ctx type (:annotations method) :method)))]
       {:type type :method method :rule (:rule hit) :kind (get-in hit [:rule :kind])
        :sem (sem-attrs (:rule hit) (:attrs hit)) :warnings ["no-impl"]})))
 
 (defn- candidate-key [{:keys [type method]}]
-  [(:fqn type) (:name method) (:params method)])
+  [(:fqn type) (:name method) (or (:signature-params method) (:params method))])
 
 (defn- select-candidates
   "同一方法既有项目规则又有内置规则命中时只保留项目规则；接口方法被多个类实现时标 multi-impl。"
@@ -397,10 +399,12 @@
   (some #(when (str/starts-with? (str module) (str (:name %) ".")) (:name %))
         (get-in ws [:architecture :guidance :build-modules])))
 
-(defn- entry-id [kind text-label shown {:keys [type method declaration]}]
+(defn- entry-id [kind text-label shown {:keys [type method declaration rule]}]
   (str (name kind) ":" text-label
        (when (= :mq kind) (str "|" (get shown "consumerGroup") "|" (get shown "tag")))
-       "#" (:fqn type) "." (if declaration "<unresolved>" (:name method)) "(" (str/join "," (:params method)) ")"))
+       "#" (:fqn type) "." (if declaration "<unresolved>" (:name method))
+       "(" (str/join "," (or (:signature-params method) (:params method))) ")"
+       "|rule:" (when (= :builtin (:origin rule)) "builtin:") (:id rule)))
 
 (defn- type-module
   "处理类所属的图节点：同一源码文件里名称与顶层类型一致的模块。"
@@ -411,37 +415,45 @@
         (first (sort modules))
         top)))
 
-(defn- summary
-  "入口说明：summary 属性 → 方法 Javadoc（自身没有时取被重写的父类型方法）→ 处理类 Javadoc 首句。"
-  [{:keys [index supers]} {:keys [type method]} shown]
-  (let [same? #(and (= (:name %) (:name method)) (= (:params %) (:params method)))
-        attribute (get shown "summary")]
-    (or (when-not (str/blank? attribute) attribute)
-        (:doc method)
-        (some (fn [super] (some #(when (same? %) (:doc %)) (get-in index [:types super :methods])))
-              (sort (supers (:fqn type))))
-        (:doc type))))
+(defn- entry-documentation [{:keys [ws index]} {:keys [type method contract annotation-source]} shown]
+  (let [docs (contracts/describe ws index type method (contracts/inherited-methods index type method) contract)
+        attribute (contracts/valid-doc (get shown "summary"))
+        class-doc (when-not (= "ambiguous" (:docStatus docs)) (contracts/valid-doc (:doc type)))
+        origin (or annotation-source {:type type :method method})]
+    (assoc docs :businessName (contracts/valid-doc (get shown "name"))
+           :methodSummary (:summary docs) :methodDocSource (:docSource docs)
+           :description attribute
+           :summary (or attribute (:summary docs) class-doc)
+           :docSource (cond attribute (contracts/source ws (:type origin) (:method origin) "annotation")
+                            (:summary docs) (:docSource docs)
+                            class-doc (contracts/source ws type nil "javadoc")))))
 
 (defn- finalize [{:keys [ws] :as ctx} candidate]
   (for [{:keys [type method kind rule sem declaration] :as candidate} (expand candidate)
         :let [shown (display-sem sem)
               text-label (or (declared/fill-template (:label-template candidate) shown) (label candidate shown))
               path (workspace/relative ws (:file type))
-              module (type-module ctx type)]]
+              module (type-module ctx type)
+              docs (when-not declaration (entry-documentation ctx candidate shown))
+              contract (:contract candidate)
+              contract-source (when contract (contracts/source ws (:type contract) (:method contract) "contract"))]]
     (cond->
+    (merge docs
     {:id (entry-id kind text-label shown candidate)
      :kind (name kind) :label text-label :channel (channel candidate)
      :module module :buildModule (build-module ws module)
-     :handler {:type (:fqn type) :method (if declaration "<unresolved>" (:name method)) :params (if declaration [] (:params method))}
+     :handler (cond-> {:type (:fqn type) :method (if declaration "<unresolved>" (:name method)) :params (if declaration [] (:params method))}
+                (not declaration) (assoc :signature (contracts/parameters (:index ctx) type method)))
      :anchor {:path path :startLine (:start (or method type)) :endLine (:end (or method type)) :symbol (symbol-name candidate)}
      :attrs shown :tags (tags sem) :summary (if declaration
                                              "已声明发布 RPC 服务；入口方法继承自外部依赖，无法定位，需复核。"
-                                             (summary ctx candidate shown))
+                                             (:summary docs))
      :rule (if (= :project (:origin rule)) (:id rule) (str "builtin:" (:id rule)))
      :metaRules (vec (:meta-rules candidate))
-     :sources (vec (:sources candidate))
+     :sources (cond-> (vec (:sources candidate)) contract-source (conj contract-source))
      :warnings (vec (distinct (concat (:warnings candidate)
-                                      (unresolved-warnings (mapcat flat-values (vals sem))))))}
+                                      (when (= "ambiguous" (:docStatus docs)) ["ambiguous-doc"])
+                                      (unresolved-warnings (mapcat flat-values (vals sem))))))})
       declaration (assoc :declaration declaration))))
 
 (defn- impl-edges
@@ -454,12 +466,28 @@
     (for [[super [impl & more]] impls :when (not more)]
       {:from (type-module ctx (types super)) :to (type-module ctx impl)})))
 
+(defn- merge-entry-contracts [left right]
+  (let [candidate (fn [entry] (when-let [source (:contractSource entry)]
+                               (assoc source :businessName (:businessName entry) :summary (:summary entry))))
+        candidates (vec (distinct (concat (or (:contractCandidates left) (when-let [source (candidate left)] [source]))
+                                          (or (:contractCandidates right) (when-let [source (candidate right)] [source])))))
+        origins (distinct (map :anchor candidates))
+        unique-value (fn [field] (let [values (distinct (map field candidates))]
+                                   (when (= 1 (count values)) (first values))))]
+    (if (< (count origins) 2) left
+      (assoc left :contractCandidates candidates :contractStatus "ambiguous" :docStatus "ambiguous"
+             :contractSource nil :contractAnchor nil :docSource nil :methodDocSource nil
+             :businessName (unique-value :businessName) :summary (unique-value :summary)
+             :methodSummary nil :description nil :docCandidates candidates
+             :sources (vec (distinct (concat (:sources left) (:sources right))))
+             :warnings (vec (distinct (concat (:warnings left) (:warnings right) ["ambiguous-contract"])))))))
+
 (defn- distinct-by-id [entries]
-  (:items (reduce (fn [acc entry]
-                    (if (contains? (:seen acc) (:id entry))
-                      acc
-                      (-> acc (update :seen conj (:id entry)) (update :items conj entry))))
-                  {:seen #{} :items []} entries)))
+  (:items (reduce (fn [{:keys [seen] :as acc} entry]
+                    (if-let [position (get seen (:id entry))]
+                      (update-in acc [:items position] merge-entry-contracts entry)
+                      (-> acc (assoc-in [:seen (:id entry)] (count (:items acc))) (update :items conj entry))))
+                  {:seen {} :items []} entries)))
 
 (defn- ambiguities
   "只因通配导入不能确定全名、但候选里有规则目标的注解。"

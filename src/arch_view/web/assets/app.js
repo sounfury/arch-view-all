@@ -1551,11 +1551,14 @@ function showEntryDetails(items) {
   const type = items[0].handler?.type || '';
   openDrawer(type.split('.').at(-1), type, '业务入口详情');
   const panel = $('#drawer-content');
-  const sourceNames = { xml: 'XML 订阅', dispatcher: '分发者', 'dispatch-key': '分发 key' };
+  const sourceNames = { xml: 'XML 订阅', dispatcher: '分发者', 'dispatch-key': '分发 key', contract: '方法契约' };
   for (const entry of items) {
     const section = element('section', 'entry-detail');
-    section.append(element('h3', '', entry.label), element('p', '', entry.channel?.label));
+    section.append(element('h3', '', entry.businessName || entry.label), element('p', '', entry.channel?.label));
+    if (entry.businessName) section.append(element('p', 'detail-id', entry.label));
     if (entry.summary) section.append(element('p', '', entry.summary));
+    if (entry.methodSummary && entry.methodSummary !== entry.summary) section.append(element('p', '', `方法说明：${entry.methodSummary}`));
+    if (entry.docSource) section.append(element('p', 'detail-provenance', `说明来自 ${entry.docSource.anchor?.symbol || entry.docSource.type}`));
     const attrs = element('dl', 'entry-attrs');
     for (const [key, value] of Object.entries(entry.attrs || {})) {
       attrs.append(element('dt', '', key), element('dd', '', Array.isArray(value) ? value.join('、') : value));
@@ -1563,12 +1566,14 @@ function showEntryDetails(items) {
     if (attrs.children.length) section.append(attrs);
     if (entry.tags?.length) section.append(element('p', '', entry.tags.join(' · ')));
     if (entry.warnings?.length) section.append(element('p', 'entry-warning', `警告：${entry.warnings.join('、')}`));
-    section.append(button(`处理方法：${entry.handler?.method}()`, 'text-button', () => void showSource(entry.module, entry.anchor?.startLine)));
+    section.append(button(`查看实现：${entry.handler?.type}#${entry.handler?.method}()`, 'text-button', () =>
+      entry.implementationAnchor ? void showEntryAnchor(entry.implementationAnchor) : void showSource(entry.module, entry.anchor?.startLine)));
     for (const source of entry.sources || []) {
       const anchor = source.anchor;
       if (!anchor?.path) continue;
       const line = element('p', 'entry-source-link');
-      line.append(button(`${sourceNames[source.kind] || source.kind}：${anchor.path}:${anchor.startLine}`, 'text-button', () => void showEntryAnchor(anchor)));
+      const label = source.kind === 'contract' ? (source.declarationKind === 'class' ? '查看父类定义' : '查看接口定义') : sourceNames[source.kind] || source.kind;
+      line.append(button(`${label}：${anchor.path}:${anchor.startLine}`, 'text-button', () => void showEntryAnchor(anchor)));
       section.append(line);
     }
     section.append(element('small', 'entry-rule', `识别规则：${entry.rule}`));

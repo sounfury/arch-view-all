@@ -3,7 +3,7 @@
 const NODE_WIDTH = 264, NODE_HEIGHT = 88, LANE_WIDTH = 292, LANE_GAP = 42, TOP = 78;
 
 export function createEntryChain(host) {
-  const { state, api, element, button, icon, svgElement, $, toast, showSource, showAnchor, openDrawer } = host;
+  const { state, api, element, button, svgElement, $, toast, showAnchor, openDrawer } = host;
   let entry = null, data = null, selected = null, loading = false, error = '', request = 0, previous = null;
   let options = { depth: 6, limit: 60 };
 
@@ -48,13 +48,35 @@ export function createEntryChain(host) {
   // ===== 私有方法 =====
 
   function nodeName(node) { return node?.label || node?.method || node?.id || ''; }
+  function docName(source) { return source?.anchor?.symbol || `${source?.type || ''}#${source?.method || ''}`; }
+  function description(node) {
+    return node.summary === node.businessName && node.methodSummary ? node.methodSummary : node.summary;
+  }
+  function descriptionSource(node) {
+    return description(node) === node.methodSummary && node.methodDocSource ? node.methodDocSource : node.docSource;
+  }
+  function provenance(node) {
+    const source = descriptionSource(node);
+    if (!source && node.docStatus === 'inherited' && node.docCandidates?.length > 1) return '说明来自多个契约（内容一致）';
+    return source && (source.type !== node.type || source.anchor?.path !== node.implementationAnchor?.path
+      || source.anchor?.startLine !== node.implementationAnchor?.startLine)
+      ? `说明来自 ${docName(source)}${source.kind === 'annotation' ? '（注解）' : ''}` : '';
+  }
+  function ambiguous(node) { return node.docStatus === 'ambiguous' || node.contractStatus === 'ambiguous'; }
+  function hasContracts(node) { return Boolean(node.contractAnchor || node.docCandidates?.length); }
+  function nodeHeight(node) {
+    return NODE_HEIGHT + (node.businessName ? 18 : 0) + (provenance(node) || ambiguous(node) ? 18 : 0) + (hasContracts(node) ? 28 : 0);
+  }
+  function contractButton(node) {
+    return button(node.contractSource?.declarationKind === 'class' ? '查看父类定义' : '查看接口定义',
+      'text-button', () => void showAnchor(node.contractAnchor));
+  }
   function source(node) {
-    if (!node?.anchor) return;
-    if (node.module && node.kind === 'method') void showSource(node.module, node.anchor.startLine);
-    else void showAnchor(node.anchor);
+    const anchor = node?.implementationAnchor || node?.anchor;
+    if (anchor) void showAnchor(anchor);
   }
   function select(id) {
-    selected = id;
+    selected = id; state.detailCollapsed = false; state.detailForced = false;
     for (const node of $('#map-world').querySelectorAll('.chain-node')) node.classList.toggle('current', node.dataset.methodId === id);
     host.refreshDetail();
   }
@@ -81,12 +103,12 @@ export function createEntryChain(host) {
     const depths = new Map();
     for (const lane of lanes) {
       const counts = new Map();
-      for (const node of lane.items) counts.set(node.depth, (counts.get(node.depth) || 0) + 1);
-      for (const [depth, count] of counts) depths.set(depth, Math.max(depths.get(depth) || 0, count));
+      for (const node of lane.items) counts.set(node.depth, (counts.get(node.depth) || 0) + nodeHeight(node) + 18);
+      for (const [depth, height] of counts) depths.set(depth, Math.max(depths.get(depth) || 0, height));
     }
     const rows = new Map(); let height = TOP;
-    for (const [depth, count] of [...depths].sort((a, b) => a[0] - b[0])) {
-      rows.set(depth, height); height += count * (NODE_HEIGHT + 18) + 50;
+    for (const [depth, rowHeight] of [...depths].sort((a, b) => a[0] - b[0])) {
+      rows.set(depth, height); height += rowHeight + 50;
     }
     const nav = $('#nav-float'), viewport = $('#map-viewport');
     const left = nav.hidden ? 28 : Math.max(28, nav.getBoundingClientRect().right - viewport.getBoundingClientRect().left + 28);
@@ -94,8 +116,9 @@ export function createEntryChain(host) {
     lanes.forEach((lane, index) => {
       const counts = new Map(); lane.x = left + index * (LANE_WIDTH + LANE_GAP);
       for (const node of lane.items) {
-        const slot = counts.get(node.depth) || 0; counts.set(node.depth, slot + 1);
-        positions.set(node.id, { x: lane.x + 14, y: rows.get(node.depth) + slot * (NODE_HEIGHT + 18) });
+        const offset = counts.get(node.depth) || 0, height = nodeHeight(node);
+        counts.set(node.depth, offset + height + 18);
+        positions.set(node.id, { x: lane.x + 14, y: rows.get(node.depth) + offset, height });
       }
     });
     return { lanes, positions, width: Math.max(360, lanes.length * (LANE_WIDTH + LANE_GAP) + left), height: Math.max(300, height + 30) };
@@ -106,7 +129,7 @@ export function createEntryChain(host) {
       const x = from.x + NODE_WIDTH + 12;
       return { d: `M ${from.x + NODE_WIDTH} ${from.y + 52} H ${x} V ${from.y - 12} H ${x1} V ${from.y}`, x: x, y: from.y - 16 };
     }
-    const y1 = from.y + NODE_HEIGHT, y2 = to.y;
+    const y1 = from.y + from.height, y2 = to.y;
     const mid = y2 > y1 ? y1 + Math.max(18, (y2 - y1) / 2) + (index % 3) * 5 : Math.min(from.y, to.y) - 22;
     return { d: `M ${x1} ${y1} V ${mid} H ${x2} V ${y2}`, x: (x1 + x2) / 2, y: mid - 5 };
   }
@@ -149,13 +172,29 @@ export function createEntryChain(host) {
     drawEdges(world, diagram);
     for (const node of data.nodes) {
       const position = diagram.positions.get(node.id);
-      const card = button('', `chain-node ${node.kind}${node.id === selected ? ' current' : ''}${node.id === data.root ? ' root' : ''}`, () => select(node.id));
+      const card = element('article', `chain-node ${node.kind}${node.id === selected ? ' current' : ''}${node.id === data.root ? ' root' : ''}`);
       card.dataset.methodId = node.id; card.style.left = `${position.x}px`; card.style.top = `${position.y}px`;
-      card.style.width = `${NODE_WIDTH}px`; card.style.height = `${NODE_HEIGHT}px`;
-      card.append(element('small', 'chain-node-kind', node.kind === 'exit' ? `出口 · ${node.exitKind}` : node.kind === 'unresolved' ? '目标未解析' : node.id === data.root ? '入口起点' : '方法'),
-        element('strong', '', nodeName(node)), element('span', '', node.summary || (node.kind === 'method' ? `(${(node.params || []).join(', ')})` : node.anchor?.path || '')));
-      card.title = `${nodeName(node)}\n${node.summary || ''}\n${node.anchor?.path}:${node.anchor?.startLine}\n单击看详情 · 双击打开源码`;
-      card.addEventListener('dblclick', () => source(node)); world.append(card);
+      card.style.width = `${NODE_WIDTH}px`; card.style.height = `${position.height}px`;
+      const main = button('', 'chain-node-select', () => select(node.id));
+      const kind = node.kind === 'exit' ? `出口 · ${node.exitKind}` : node.kind === 'unresolved' ? '目标未解析'
+        : node.id === data.root ? `入口起点${data.entry.channel?.label ? ` · ${data.entry.channel.label}` : ''}` : '方法';
+      main.append(element('small', 'chain-node-kind', kind), element('strong', '', node.businessName || nodeName(node)));
+      if (node.businessName) main.append(element('span', 'chain-technical-name', nodeName(node)));
+      main.append(element('span', '', description(node) || (node.kind === 'method' ? `(${(node.params || []).join(', ')})` : node.anchor?.path || '')));
+      if (provenance(node)) main.append(element('small', 'chain-doc-source', provenance(node)));
+      if (ambiguous(node)) main.append(element('small', 'entry-warning', '多个契约说明，需复核'));
+      card.append(main);
+      if (hasContracts(node)) {
+        const actions = element('div', 'chain-node-actions');
+        if (node.contractAnchor) actions.append(contractButton(node));
+        else actions.append(button('查看说明来源', 'text-button', () => { select(node.id); host.refreshDetail(); }));
+        if (node.implementationAnchor) actions.append(button('查看实现', 'text-button', () => void showAnchor(node.implementationAnchor)));
+        card.append(actions);
+      }
+      card.title = [node.businessName, nodeName(node), node.summary, node.operation,
+        `${node.type}#${node.method}(${(node.params || []).join(', ')})`, provenance(node),
+        `${node.anchor?.path}:${node.anchor?.startLine}`, '单击看详情 · 双击打开实现'].filter(Boolean).join('\n');
+      main.addEventListener('dblclick', () => source(node)); world.append(card);
     }
     host.applyZoom();
   }
@@ -164,16 +203,33 @@ export function createEntryChain(host) {
     if (loading || error || !data) { panel.append(element('p', '', error || '正在解析…')); return; }
     panel.append(element('p', 'detail-provenance', '按方法的静态调用展开；泳道与步骤排列不表示运行时顺序。'));
     const node = data.nodes.find(node => node.id === selected) || data.nodes[0];
-    panel.append(element('h4', '', nodeName(node)), element('p', 'detail-id', node.type));
+    panel.append(element('h4', '', node.businessName || nodeName(node)),
+      element('p', 'detail-id', `${node.type}#${node.method}(${(node.params || []).join(', ')})`));
+    if (node.businessName) panel.append(element('p', 'detail-id', nodeName(node)));
     if (node.summary) panel.append(element('p', '', node.summary));
+    if (node.methodSummary && node.methodSummary !== node.summary) panel.append(element('p', '', `方法说明：${node.methodSummary}`));
+    if (node.docSource) panel.append(element('p', 'detail-provenance', `说明来自 ${docName(node.docSource)}${node.docSource.kind === 'annotation' ? '（注解）' : ''}`));
+    if (node.methodDocSource && node.methodSummary !== node.summary) panel.append(element('p', 'detail-provenance', `方法说明来自 ${docName(node.methodDocSource)}`));
+    if (node.entrySummary && node.entrySummary !== node.summary && node.entrySummary !== node.methodSummary) panel.append(element('p', '', `入口说明：${node.entrySummary}`));
+    if (ambiguous(node)) panel.append(element('p', 'entry-warning', '多个接口或父类提供了不同说明或契约来源，请核对契约。'));
+    if (node.docCandidates?.length && (ambiguous(node) || !node.contractAnchor)) {
+      const candidates = element('div', 'detail-actions');
+      for (const candidate of node.docCandidates || []) if (candidate.anchor) {
+        candidates.append(button(`查看契约：${docName(candidate)}`, 'text-button', () => void showAnchor(candidate.anchor)));
+      }
+      panel.append(candidates);
+    }
     if (node.abstract) panel.append(element('p', 'entry-warning', '没有找到该方法的项目内具体实现。'));
     if (node.warnings?.length) panel.append(element('p', 'entry-warning', `警告：${node.warnings.join('、')}；属性保留源码表达式。`));
     if (node.rule) panel.append(element('p', 'detail-provenance', `出口规则：${node.rule}`));
-    panel.append(button('查看源码', 'button small', () => source(node)));
+    const actions = element('div', 'detail-actions');
+    if (node.contractAnchor) actions.append(contractButton(node));
+    actions.append(button(node.implementationAnchor ? '查看实现' : '查看源码', 'button small', () => source(node)));
+    panel.append(actions);
     const attrs = element('dl', 'entry-attrs');
     for (const [key, value] of Object.entries(node.attrs || {})) attrs.append(element('dt', '', key), element('dd', '', String(value)));
     panel.append(attrs);
-    for (const source of node.sources || []) if (source.anchor) {
+    for (const source of node.sources || []) if (source.anchor && source.kind !== 'contract') {
       panel.append(button(`声明：${source.anchor.path}:${source.anchor.startLine}`, 'text-button', () => void showAnchor(source.anchor)));
     }
     const edges = data.edges.filter(edge => edge.from === node.id || edge.to === node.id);

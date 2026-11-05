@@ -138,12 +138,13 @@
   (last (str/split (str/replace param "..." "[]") #"\.")))
 
 (defn- root-of [graph entry]
-  (let [{:keys [type method params]} (:handler entry)
+  (let [{:keys [type method params signature]} (:handler entry)
         candidates (if-let [index (:method-index graph)]
                      (map #(get-in graph [:nodes %]) (get index [type method (count params)]))
                      (filter #(and (= type (:type %)) (= method (:method %)) (= (count params) (count (:params %))))
                              (vals (:nodes graph))))
-        exact (filter #(= (mapv simple-param params) (mapv simple-param (:params %))) candidates)
+        exact (filter #(if (vector? signature) (= signature (:params %))
+                           (= (mapv simple-param params) (mapv simple-param (:params %)))) candidates)
         located (filter #(= (select-keys (:anchor entry) [:path :startLine])
                             (select-keys (:anchor %) [:path :startLine])) candidates)]
     (cond (= 1 (count located)) (:id (first located))
@@ -176,18 +177,44 @@
         (recur (into (pop queue) (map #(vector % (inc depth)) nexts))
                (into seen nexts) (conj ordered {:id id :depth depth}))))))
 
+(defn- entry-node
+  "仅修饰当前切片中的处理节点，不改写缓存的共享方法图或其它入口。"
+  [node entry]
+  (let [own? (= "implementation" (:docStatus node))
+        entry-summary (:summary entry)]
+    (merge node
+           (select-keys entry [:businessName :description :contractStatus :contractCandidates])
+           {:contractAnchor (when-not (= "ambiguous" (:contractStatus entry))
+                              (or (:contractAnchor entry) (:contractAnchor node)))
+            :contractSource (when-not (= "ambiguous" (:contractStatus entry))
+                              (or (:contractSource entry) (:contractSource node)))
+            :docCandidates (if (or (:contractAnchor entry) (:contractCandidates entry)) (:docCandidates entry) (:docCandidates node))
+            :summary (if own? (:summary node) (or entry-summary (:summary node)))
+            :methodSummary (if own? (:summary node) (or (:methodSummary entry) (:summary node)))
+            :entrySummary entry-summary :operation (get-in entry [:attrs "operation"])
+            :docSource (cond own? (:docSource node) entry-summary (:docSource entry) :else (:docSource node))
+            :methodDocSource (if own? (:docSource node) (or (:methodDocSource entry) (:docSource node)))
+            :docStatus (if own? "implementation"
+                           (if (or (:contractAnchor entry) (:contractCandidates entry) entry-summary) (:docStatus entry) (:docStatus node)))
+            :attrs (merge (:attrs node) (:attrs entry))
+            :sources (vec (distinct (concat (:sources node) (:sources entry))))})))
+
 (defn- result-data [graph entry root visible all depth limit]
-  (let [ids (set (map :id visible))
+  (let [handler (root-of graph entry)
+        ids (set (map :id visible))
         edges (vec (filter #(and (ids (:from %)) (ids (:to %))) (:edges graph)))
         nodes (mapv (fn [index {:keys [id depth]}]
-                      (assoc (get-in graph [:nodes id]) :depth depth :order index
-                             :label (or (get-in graph [:nodes id :label])
-                                        (str (short-type (get-in graph [:nodes id :type])) "#" (get-in graph [:nodes id :method])))))
+                      (let [node (get-in graph [:nodes id])
+                            node (if (= id handler) (entry-node node entry) node)]
+                        (assoc node :depth depth :order index
+                               :label (or (:label node) (str (short-type (:type node)) "#" (:method node))))))
                     (range) visible)
         lanes (vec (for [[type items] (sort-by #(apply min (map :order (val %))) (group-by :type nodes))]
                      {:id type :label (short-type type) :nodes (mapv :id items)}))
         unknown (vec (mapcat #(get-in graph [:unresolved %]) ids))]
-    {:entry (select-keys entry [:id :label :kind :module :channel :handler :anchor :summary :sources])
+    {:entry (select-keys entry [:id :label :kind :module :channel :handler :anchor :summary :sources :attrs
+                               :businessName :description :contractAnchor :contractSource :contractStatus :contractCandidates
+                               :implementationAnchor :docSource])
      :root root :nodes nodes :edges edges :lanes lanes
      :modules (vec (sort (distinct (keep :module nodes))))
      :depth depth :limit limit :remaining (- (count all) (count visible))

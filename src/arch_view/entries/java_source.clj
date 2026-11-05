@@ -5,9 +5,9 @@
   (:require [arch-view.web.javadoc :as javadoc]
             [clojure.java.io :as io]
             [clojure.string :as str])
-  (:import [com.sun.source.tree AnnotatedTypeTree AnnotationTree AssignmentTree BinaryTree BlockTree ClassTree
+  (:import [com.sun.source.tree AnnotatedTypeTree AnnotationTree ArrayTypeTree AssignmentTree BinaryTree BlockTree ClassTree
             CompilationUnitTree IdentifierTree ImportTree LiteralTree MemberSelectTree MethodTree
-            NewArrayTree NewClassTree ParameterizedTypeTree ParenthesizedTree ReturnTree Tree Tree$Kind VariableTree]
+            NewArrayTree NewClassTree ParameterizedTypeTree ParenthesizedTree ReturnTree Tree Tree$Kind TypeParameterTree VariableTree]
            [com.sun.source.util DocTrees JavacTask SourcePositions TreePath TreePathScanner Trees]
            [javax.lang.model.element Modifier]
            [javax.tools DiagnosticCollector JavaCompiler StandardJavaFileManager StandardLocation ToolProvider]
@@ -102,7 +102,8 @@
 
 (def ^:private java-lang
   #{"Override" "Deprecated" "SuppressWarnings" "FunctionalInterface" "SafeVarargs"
-    "String" "Object" "Integer" "Long" "Boolean" "Double" "Runnable" "Exception"})
+    "String" "Object" "Integer" "Long" "Boolean" "Double" "Number" "CharSequence" "Comparable"
+    "Byte" "Short" "Float" "Character" "Throwable" "RuntimeException" "Runnable" "Exception"})
 
 (defn- parse-units [files]
   (let [^JavaCompiler compiler (ToolProvider/getSystemJavaCompiler)
@@ -150,7 +151,18 @@
   (cond
     (instance? ParameterizedTypeTree tree) (type-name (.getType ^ParameterizedTypeTree tree))
     (instance? AnnotatedTypeTree tree) (type-name (.getUnderlyingType ^AnnotatedTypeTree tree))
+    (instance? ArrayTypeTree tree) (str (type-name (.getType ^ArrayTypeTree tree)) "[]")
     :else (str tree)))
+
+(defn- type-parameters [parameters]
+  (mapv (fn [^TypeParameterTree parameter]
+          {:name (str (.getName parameter)) :bound (if-let [bound (first (.getBounds parameter))]
+                                                    (type-name bound) "java.lang.Object")}) parameters))
+
+(defn- super-spec [tree]
+  {:name (type-name tree)
+   :args (when (instance? ParameterizedTypeTree tree)
+           (mapv type-name (.getTypeArguments ^ParameterizedTypeTree tree)))})
 
 (defn- raw-annotation [line ^AnnotationTree tree]
   {:name (type-name (.getAnnotationType tree))
@@ -185,12 +197,18 @@
       (let [^ReturnTree statement (first statements)]
         (when (.getExpression statement) {:tree (.getExpression statement) :line (line statement)})))))
 
-(defn- method-data [line interface? ^MethodTree tree]
+(defn- method-data [line position interface? ^MethodTree tree]
   (let [flags (set (.getFlags (.getModifiers tree)))
         anns (annotations line (.getModifiers tree))]
     {:name (str (.getName tree))
      :params (mapv param-type (.getParameters tree))
-     :public? (or interface? (contains? flags Modifier/PUBLIC))
+     :signature-params (mapv #(type-name (.getType ^VariableTree %)) (.getParameters tree))
+     :type-parameters (type-parameters (.getTypeParameters tree))
+     :source-start (position tree)
+     :private? (contains? flags Modifier/PRIVATE)
+     :protected? (contains? flags Modifier/PROTECTED)
+     :final? (contains? flags Modifier/FINAL)
+     :public? (and (not (contains? flags Modifier/PRIVATE)) (or interface? (contains? flags Modifier/PUBLIC)))
      :static? (contains? flags Modifier/STATIC)
      :abstract? (nil? (.getBody tree))
      :void? (= "void" (str (.getReturnType tree)))
@@ -204,11 +222,11 @@
     (and (.getInitializer tree)
          (or interface? (and (contains? flags Modifier/STATIC) (contains? flags Modifier/FINAL))))))
 
-(defn- class-members [line doc interface? ^ClassTree tree]
+(defn- class-members [line position doc interface? ^ClassTree tree]
   (reduce (fn [acc member]
             (cond
               (and (instance? MethodTree member) (not= "<init>" (str (.getName ^MethodTree member))))
-              (update acc :methods conj (assoc (method-data line interface? member) :doc (doc member)))
+              (update acc :methods conj (assoc (method-data line position interface? member) :doc (doc member)))
               (instance? VariableTree member)
               (let [^VariableTree field member
                     field-name (str (.getName field))
@@ -221,15 +239,17 @@
           {:methods [] :fields {} :constants {}}
           (.getMembers tree)))
 
-(defn- class-data [{:keys [line doc]} file ctx outers fqn ^ClassTree tree]
+(defn- class-data [{:keys [line position doc]} file ctx outers fqn ^ClassTree tree]
   (let [kind (type-kind tree)
         flags (set (.getFlags (.getModifiers tree)))
-        members (class-members line doc (boolean (#{:interface :annotation} kind)) tree)]
+        members (class-members line position doc (boolean (#{:interface :annotation} kind)) tree)]
     (assoc members :doc (doc tree)
            :fqn fqn :simple (str (.getSimpleName tree)) :package (:package ctx) :file file
            :kind kind :abstract? (or (contains? flags Modifier/ABSTRACT) (not= :class kind))
            :annotations (annotations line (.getModifiers tree))
            :super-names (mapv type-name (remove nil? (cons (.getExtendsClause tree) (.getImplementsClause tree))))
+           :super-specs (mapv super-spec (remove nil? (cons (.getExtendsClause tree) (.getImplementsClause tree))))
+           :type-parameters (type-parameters (.getTypeParameters tree))
            :ctx ctx :outers outers :start (line tree) :end (line tree :end))))
 
 (defn- collect-classes
@@ -277,7 +297,8 @@
         named-types (remove :local? classes)
         local-types (into {} (map (juxt :simple :fqn)) named-types)
         file (.getCanonicalPath (io/file (.toUri (.getSourceFile unit))))
-        env {:line (line-fn positions unit) :doc (doc-fn docs unit)}]
+        env {:line (line-fn positions unit) :position #(.getStartPosition ^SourcePositions positions unit %)
+             :doc (doc-fn docs unit)}]
     (map (fn [{:keys [fqn outers tree local? anonymous? anonymous-super source-start]}]
            (let [scopes (set (cons fqn outers))
                  visible (filter #(scopes (:fqn %)) classes)
@@ -286,7 +307,8 @@
                                                                [(:simple type) (:fqn type)]))))]
              (cond-> (assoc (class-data env file ctx (vec outers) fqn tree) :source-start source-start)
                local? (assoc :local? true)
-               anonymous? (assoc :anonymous? true :simple (last-segment fqn) :super-names [anonymous-super])))) classes)))
+               anonymous? (assoc :anonymous? true :simple (last-segment fqn) :super-names [anonymous-super]
+                                 :super-specs [{:name anonymous-super}])))) classes)))
 
 (defn- build-index [types]
   (let [index {:types (into {} (map (juxt :fqn identity)) types)

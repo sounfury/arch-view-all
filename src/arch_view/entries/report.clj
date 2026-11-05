@@ -145,6 +145,8 @@
               (item "multi-impl" "接口方法上的入口注解有多个实现类，每个实现各算一个入口" (with-warning entries "multi-impl"))
               (item "unresolved-declaration" "已声明发布 RPC 服务，但入口方法继承自外部依赖，无法定位；需复核，未将 protected hook 当作入口"
                     (with-warning entries "unresolved-declaration"))
+              (item "ambiguous-doc" "多个接口或父类提供了不同方法说明，需复核文档来源" (with-warning entries "ambiguous-doc"))
+              (item "ambiguous-contract" "同一入口匹配多个契约来源，已保留候选而未任取一个" (with-warning entries "ambiguous-contract"))
               (item "no-impl" "接口方法上的入口注解没有项目内实现类" (with-warning entries "no-impl"))
               (item "ambiguous-import" "多个通配导入都可能提供该注解，无法确定全名，未计入入口"
                     (map #(str "@" (:annotation %) " (" (:location %) ")：" (str/join "、" (:candidates %))) ambiguous))

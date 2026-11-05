@@ -59,7 +59,7 @@ export function createEntriesNav({ host, api, element, button, icon, toast, loca
   function multiDomain(entry) { return (entry.domains?.[groupBy] || []).filter(domain => !special(domain)).length > 1; }
   function haystack(entry) {
     const attrs = Object.values(entry.attrs || {}).flat();
-    return [entry.label, entry.handler?.type, entry.handler?.method, entry.summary, entry.channel?.label, ...attrs, ...(entry.tags || [])]
+    return [entry.businessName, entry.label, entry.handler?.type, entry.handler?.method, entry.summary, entry.channel?.label, ...attrs, ...(entry.tags || [])]
       .filter(Boolean).join('\n').toLowerCase();
   }
   function visibleEntries() {
@@ -95,7 +95,7 @@ export function createEntriesNav({ host, api, element, button, icon, toast, loca
   }
   function simpleName(type) { return String(type || '').split('.').at(-1); }
   function tooltip(entry) {
-    return [entry.label, `${entry.handler?.type}#${entry.handler?.method}`, entry.summary,
+    return [entry.businessName, entry.label, `${entry.handler?.type}#${entry.handler?.method}`, entry.summary,
       `${entry.anchor?.path}:${entry.anchor?.startLine}`, entry.warnings?.length ? `警告：${entry.warnings.join('、')}` : '']
       .filter(Boolean).join('\n');
   }
@@ -137,8 +137,8 @@ export function createEntriesNav({ host, api, element, button, icon, toast, loca
   }
   function renderMethod(entry) {
     const copy = element('span', 'module-copy');
-    copy.append(element('span', 'module-name', entry.label),
-      element('small', '', entry.summary || `${entry.handler?.method}()`));
+    copy.append(element('span', 'module-name', entry.businessName || entry.label),
+      element('small', '', [entry.businessName ? entry.label : '', entry.summary || `${entry.handler?.method}()`].filter(Boolean).join(' · ')));
     const row = element('div', 'entry-method-row');
     row.append(entryButton(entry, 'entry-method', [copy, ...badges([entry])]), entryInfo([entry]));
     return row;
@@ -161,8 +161,8 @@ export function createEntriesNav({ host, api, element, button, icon, toast, loca
     } else toggle = element('span', 'tree-toggle leaf');
     const first = items[0];
     const copy = element('span', 'module-copy');
-    copy.append(element('span', 'module-name', simpleName(type)),
-      element('small', '', multi ? `${items.length} 个入口` : [first.label, first.summary].filter(Boolean).join(' · ')));
+    copy.append(element('span', 'module-name', !multi && first.businessName ? first.businessName : simpleName(type)),
+      element('small', '', multi ? `${items.length} 个入口` : [first.businessName ? simpleName(type) : '', first.label, first.summary].filter(Boolean).join(' · ')));
     const channelTags = [...new Set(items.map(entry => entry.channel?.label))].map(label => tag(label, 'channel'));
     const link = entryButton(first, 'entry-class-link', [...channelTags, copy, ...badges(items)], !multi);
     link.dataset.handler = type;
