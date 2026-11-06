@@ -117,7 +117,7 @@
                                         "demo.web.model" "解释" {:session-id "x"}))))
 
   (it "pi-acp 把问答交给会话管理并保留源码锚点"
-    (with-redefs [sessions/ask! (fn [_ target markdown question anchors options]
+    (with-redefs [sessions/ask! (fn [_ target {:keys [markdown]} options]
                                   (should= "demo.web.model" target)
                                   (should-contain "模型如何构建？" markdown)
                                   (should= {:session-id "sid"} options)

@@ -192,7 +192,7 @@
        vec))
 
 (defn- crossing-cost
-  [pairs placement idx row track {:keys [crossing-penalty]}]
+  [pairs placement idx {:keys [row track]} {:keys [crossing-penalty]}]
   (let [candidate-placement {:row row :track track}
         placement* (assoc placement idx candidate-placement)
         placed (placed-edges pairs placement)
@@ -211,19 +211,19 @@
     (* fan-in center-penalty center-distance)))
 
 (defn- slot-score
-  [pair-index reverse-index pairs placement incoming-counts idx {:keys [row track]} scoring]
+  [{:keys [pair-index reverse-index pairs incoming-counts scoring]} placement idx {:keys [row track] :as slot}]
   (let [connections (connected-placement pair-index reverse-index placement idx)
         height-cost (* (:height-weight scoring) row)]
     (+ height-cost
        (edge-shape-cost connections row track scoring)
        (upward-cost connections row scoring)
-       (crossing-cost pairs placement idx row track scoring)
+       (crossing-cost pairs placement idx slot scoring)
        (center-cost incoming-counts idx track scoring))))
 
 (defn- best-slot
-  [pair-index reverse-index pairs placement incoming-counts idx candidates scoring]
+  [context placement idx candidates]
   (reduce (fn [best candidate]
-            (let [score (slot-score pair-index reverse-index pairs placement incoming-counts idx candidate scoring)]
+            (let [score (slot-score context placement idx candidate)]
               (if (or (nil? best) (< score (:score best)))
                 (assoc candidate :score score)
                 best)))
@@ -234,8 +234,8 @@
   ([ordered-layer-indexes pairs incoming-counts]
    (assign-layer-slots ordered-layer-indexes pairs incoming-counts default-slot-scoring))
   ([ordered-layer-indexes pairs incoming-counts scoring]
-   (let [pair-index (group-by first pairs)
-         reverse-index (group-by second pairs)
+   (let [context {:pair-index (group-by first pairs) :reverse-index (group-by second pairs)
+                  :pairs pairs :incoming-counts incoming-counts :scoring scoring}
          count->min-row (count->min-row-map ordered-layer-indexes incoming-counts)]
      (loop [remaining ordered-layer-indexes
             placement {}
@@ -247,7 +247,7 @@
                row-limit (inc (max (+ 2 max-row)
                                    (+ 2 min-row)))
                candidates (slot-candidates placement min-row row-limit)
-               best (best-slot pair-index reverse-index pairs placement incoming-counts idx candidates scoring)
+               best (best-slot context placement idx candidates)
                next-placement (assoc placement idx {:row (:row best) :track (:track best)})]
            (recur (rest remaining)
                   next-placement
@@ -350,8 +350,8 @@
     (+ group-start (* (double peer-idx) spacing))))
 
 (defn- layer-rect-entry
-  [layer-by-index layer row-by-layer-index peer-by-layer-index module->component module->kind module->full-name module->leaf? layer->label
-   canvas-width geometry]
+  [{:keys [layer-by-index row-by-layer-index peer-by-layer-index module->component
+           module->kind module->full-name module->leaf? layer->label]} layer canvas-width geometry]
   (let [{:keys [index]} layer
         modules (:modules (get layer-by-index index))
         component (dominant-component modules module->component)
@@ -374,7 +374,7 @@
                 (if component (name component) (str "layer-" index)))}))
 
 (defn- decorate-module-position
-  [m rect-by-layer module->cycle? module->leaf? module->source-file module->display-label]
+  [m rect-by-layer {:keys [module->cycle? module->leaf? module->source-file module->display-label]}]
   (let [rect (get rect-by-layer (:layer m))
         rect-width (double (or (:width rect) 120.0))
         max-label-chars (max 8 (long (Math/floor (/ (max 20.0 (- rect-width 12.0)) 7.0))))]
@@ -388,12 +388,12 @@
            :full-name (:full-name m))))
 
 (defn- scene-module-positions
-  [layers rect-by-layer module->kind module->full-name module->cycle? module->leaf? module->source-file module->display-label]
+  [{:keys [layers module->kind module->full-name] :as inputs} rect-by-layer]
   (->> layers
        (mapcat (fn [{:keys [index modules]}]
                  (->> (module-positions-for-layer index modules (get rect-by-layer index) module->kind module->full-name)
                       (map (fn [m]
-                             (decorate-module-position m rect-by-layer module->cycle? module->leaf? module->source-file module->display-label)))
+                             (decorate-module-position m rect-by-layer inputs)))
                       labels/apply-layer-stagger)))
        vec))
 
@@ -418,20 +418,15 @@
    (build-scene architecture {}))
   ([architecture {:keys [canvas-width layer-height]
                   :or {canvas-width 1200 layer-height 140}}]
-   (let [{:keys [layers layer-by-index row-by-layer-index peer-by-layer-index module->component layer->label module->kind module->cycle?
-                 module->leaf? module->source-file module->full-name module->display-label]}
-         (scene-inputs architecture)
+   (let [{:keys [layers module->display-label] :as inputs} (scene-inputs architecture)
          geometry (layer-rect-geometry canvas-width layer-height)
          layer-rects (mapv (fn [layer]
-                             (layer-rect-entry layer-by-index layer row-by-layer-index peer-by-layer-index
-                                               module->component module->kind module->full-name module->leaf? layer->label
-                                               canvas-width geometry))
+                             (layer-rect-entry inputs layer canvas-width geometry))
                            layers)
          rect-by-layer (into {} (map (juxt :index identity) layer-rects))
          cycle-lines (or (:cycle-lines architecture)
                          (layout-cycle-lines architecture module->display-label))]
      {:layer-rects layer-rects
-      :module-positions (scene-module-positions layers rect-by-layer module->kind module->full-name module->cycle?
-                                                module->leaf? module->source-file module->display-label)
+      :module-positions (scene-module-positions inputs rect-by-layer)
       :edge-drawables (scene-edge-drawables architecture)
       :cycle-lines cycle-lines})))

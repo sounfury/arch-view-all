@@ -37,6 +37,7 @@ class GenerationTest(unittest.TestCase):
     def test_cyclomatic_limit_is_inclusive(self):
         files = generate.generate(self.policy())
         self.assertIn("--fail-on-complexity 13", files[".woodpecker/圈复杂度.yaml"])
+        self.assertIn("**/assets/**", json.loads(files["quality/jscpd.json"])["ignore"])
 
     def test_kotlin_thresholds_match_zhiying(self):
         files = generate.generate(self.policy("kotlin"))

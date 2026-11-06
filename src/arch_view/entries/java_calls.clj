@@ -4,6 +4,7 @@
 (ns arch-view.entries.java-calls
   (:require [arch-view.entries.java-source :as java]
             [arch-view.entries.method-contracts :as contracts]
+            [arch-view.entries.module :as module]
             [arch-view.entries.source-snapshot :as snapshot]
             [arch-view.workspace :as workspace]
             [clojure.java.io :as io]
@@ -71,12 +72,6 @@
           written
           (:fqn (java/resolve-type (:index ctx) (:ctx owner) written)))))))
 
-(defn- module-of [ctx type]
-  (let [top (or (last (:outers type)) (:fqn type))
-        modules (map key (get (:file-modules ctx) (:file type)))]
-    (or (first (filter #(or (= top %) (str/ends-with? % (str "." top))) modules))
-        (first (sort modules)) top)))
-
 (defn- tree-anchor [{:keys [ws trees]} ^CompilationUnitTree unit tree]
   (let [positions (.getSourcePositions ^Trees trees)
         start (.getStartPosition positions unit tree)
@@ -99,7 +94,7 @@
             raw (some #(when (= start (:source-start %)) %) (:methods owner))
             flags (set (.getModifiers ^ExecutableElement element))]
         {:id (executable-id types owners element) :type (:fqn owner) :method name :params params
-         :module (module-of ctx owner) :kind "method" :summary (:doc raw)
+         :module (module/for-type ctx owner) :kind "method" :summary (:doc raw)
          :anchor (assoc anchor :symbol (str (:simple owner) "#" name))
          :abstract (nil? (.getBody tree))
          :virtual (not (or (= "<init>" name) (some flags [Modifier/STATIC Modifier/PRIVATE Modifier/FINAL])))
@@ -160,10 +155,8 @@
           (when (get-in ctx [:index :types fqn]) fqn)))
       (qualified ctx owner (tree-type trees types owners (TreePath/getPath unit arg)))))
 
-(defn- invocation [{:keys [ctx trees types owners] :as env} unit owner caller path tree]
-  (let [element (tree-element trees path)
-        executable (when (instance? ExecutableElement element) element)
-        expression (receiver-tree tree)
+(defn- invocation-receiver [{:keys [ctx trees types owners]} unit owner tree]
+  (let [expression (receiver-tree tree)
         expression-path (when expression (TreePath/getPath unit expression))
         receiver-element (when expression-path (tree-element trees expression-path))
         field (when (or (nil? receiver-element) (= ElementKind/FIELD (.getKind ^Element receiver-element)))
@@ -171,7 +164,13 @@
         receiver (or (some->> expression-path (tree-type trees types owners) (qualified ctx owner))
                      (some->> (:type-name field) (qualified ctx (get-in ctx [:index :types (:owner field)] owner)))
                      (when (instance? NewClassTree tree) (qualified ctx owner (str (.getIdentifier ^NewClassTree tree))))
-                     (:fqn owner))
+                     (:fqn owner))]
+    {:expression expression :field field :receiver receiver}))
+
+(defn- invocation [{:keys [ctx trees types owners] :as env} {:keys [unit owner caller path tree]}]
+  (let [element (tree-element trees path)
+        executable (when (instance? ExecutableElement element) element)
+        {:keys [expression field receiver]} (invocation-receiver env unit owner tree)
         target (when executable (executable-id types owners executable))
         declared (when executable (some-> (.getEnclosingElement ^ExecutableElement executable) str))
         args (arguments tree)]
@@ -272,7 +271,7 @@
                                         (try (.overrides elements element (:element candidate) owner-element)
                                              (catch Exception _ false)))]
                          {:type (get-in ctx [:index :types parent]) :method (:raw candidate)})
-             docs (contracts/describe ws (:index ctx) owner raw inherited nil)]
+             docs (contracts/describe ws (:index ctx) {:type owner :method raw :inherited inherited})]
          (merge node docs {:implementationAnchor (when-not (:abstract node) (:anchor node))}))))))
 
 (defn- callback-method?
@@ -317,9 +316,9 @@
         implementations (implementations ctx task owners nodes)
         callbacks (group-by :type (filter #(callback-method? env %) (vals nodes)))
         callback-ids (set (map :id (mapcat val callbacks)))
-        invocations (for [{:keys [unit owner caller path tree written reason]} (mapcat :invocations scanned)
+        invocations (for [{:keys [caller written reason] :as site} (mapcat :invocations scanned)
                           :let [node (get by-tree caller)] :when node
-                          :let [call (assoc (invocation env unit owner node path tree) :written written)]]
+                          :let [call (assoc (invocation env (assoc site :caller node)) :written written)]]
                       (cond-> call
                         reason (assoc :reason (str/join "；" (distinct (remove nil? [(:reason call) reason]))))))
         invocations (map (fn [call]

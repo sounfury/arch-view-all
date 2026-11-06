@@ -77,10 +77,13 @@
     (when (and (:since options) (:staged options))
       (throw (ex-info "--since 与 --staged 不能同时使用" {:status 400})))))
 
+(defn- dependency-data [ws command target options]
+  (query/dependencies ws target {:direction ({"deps" :out "rdeps" :in} command)
+                                 :depth (number-option options :depth 1)}))
+
 (defn- execute [ws command [target to] options]
   (case command
-    "deps" (query/dependencies ws target {:direction :out :depth (number-option options :depth 1)})
-    "rdeps" (query/dependencies ws target {:direction :in :depth (number-option options :depth 1)})
+    ("deps" "rdeps") (dependency-data ws command target options)
     "path" (path-data ws target to options)
     "cycles" (query/cycles ws)
     "layers" (query/layers ws {:prefix (:prefix options)})

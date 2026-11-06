@@ -239,7 +239,7 @@
           {:methods [] :fields {} :constants {}}
           (.getMembers tree)))
 
-(defn- class-data [{:keys [line position doc]} file ctx outers fqn ^ClassTree tree]
+(defn- class-data [{:keys [line position doc]} file ctx {:keys [outers fqn]} ^ClassTree tree]
   (let [kind (type-kind tree)
         flags (set (.getFlags (.getModifiers tree)))
         members (class-members line position doc (boolean (#{:interface :annotation} kind)) tree)]
@@ -305,7 +305,7 @@
                  ctx (assoc base :local-types (merge local-types
                                                     (into {} (for [type visible :when (seq (:simple type))]
                                                                [(:simple type) (:fqn type)]))))]
-             (cond-> (assoc (class-data env file ctx (vec outers) fqn tree) :source-start source-start)
+             (cond-> (assoc (class-data env file ctx {:outers (vec outers) :fqn fqn} tree) :source-start source-start)
                local? (assoc :local? true)
                anonymous? (assoc :anonymous? true :simple (last-segment fqn) :super-names [anonymous-super]
                                  :super-specs [{:name anonymous-super}])))) classes)))

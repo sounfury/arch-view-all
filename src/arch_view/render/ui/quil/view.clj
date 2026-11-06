@@ -207,16 +207,22 @@
   [dependency]
   (events/dependency-tooltip-key dependency))
 
+(defn- viewport-deps []
+  {:scaled-content-width scaled-content-width
+   :scaled-content-height scaled-content-height
+   :clamp-scroll clamp-scroll
+   :clamp-scroll-x clamp-scroll-x})
+
+(defn- dependency-hover-deps []
+  {:point-in-toolbar? point-in-toolbar?
+   :dependency-indicators dependency-indicators
+   :hovered-dependency hovered-dependency})
+
 (defn hovered-dependency-for-state
-  [{:keys [scene declutter-mode scroll-x scroll-y zoom]}]
-  (let [mx (double (q/mouse-x))
-        my (double (q/mouse-y))]
-    (when-not (point-in-toolbar? mx my)
-      (let [z (double (or zoom 1.0))
-            world-mx (+ (/ mx z) (/ (double (or scroll-x 0.0)) z))
-            world-my (+ (/ my z) (/ (double (or scroll-y 0.0)) z))
-            indicators (dependency-indicators scene declutter-mode)]
-        (hovered-dependency indicators world-mx world-my)))))
+  [state]
+  (events/hovered-dependency-at-event state
+                                      {:x (double (q/mouse-x)) :y (double (q/mouse-y))}
+                                      (dependency-hover-deps)))
 
 (defn- draw-scrollbars
   [{:keys [scene scroll-x scroll-y viewport-height viewport-width zoom]}]
@@ -250,11 +256,7 @@
   [state]
   (let [previous-width (:viewport-width state)
         now (current-time-ms)
-        state (events/sync-viewport-size state
-                                         {:scaled-content-width scaled-content-width
-                                          :scaled-content-height scaled-content-height
-                                          :clamp-scroll clamp-scroll
-                                          :clamp-scroll-x clamp-scroll-x})
+        state (events/sync-viewport-size state (viewport-deps))
         state (if (and (:reanalyze-requested? state)
                        (number? (:reanalyze-started-at state))
                        (>= (- now (:reanalyze-started-at state)) reanalyze-feedback-ms))
@@ -270,75 +272,50 @@
 
 (defn handle-key-pressed
   [state event]
-  (events/handle-key-pressed state event
-                             {:scaled-content-width scaled-content-width
-                              :scaled-content-height scaled-content-height
-                              :clamp-scroll clamp-scroll
-                              :clamp-scroll-x clamp-scroll-x}))
+  (events/handle-key-pressed state event (viewport-deps)))
 
 (defn handle-mouse-wheel
   [state event]
-  (events/handle-mouse-wheel state event
-                             {:scaled-content-width scaled-content-width
-                              :scaled-content-height scaled-content-height
-                              :clamp-scroll clamp-scroll
-                              :clamp-scroll-x clamp-scroll-x
-                              :point-in-toolbar? point-in-toolbar?
-                              :dependency-indicators dependency-indicators
-                              :hovered-dependency hovered-dependency}))
+  (events/handle-mouse-wheel state event (merge (viewport-deps) (dependency-hover-deps))))
 
 (defn handle-mouse-pressed
   [state event]
   (events/handle-mouse-pressed state event
-                               {:scaled-content-width scaled-content-width
-                                :scaled-content-height scaled-content-height
-                                :clamp-scroll clamp-scroll
-                                :clamp-scroll-x clamp-scroll-x
-                                :scrollbar-rect scrollbar-rect
-                                :horizontal-scrollbar-rect horizontal-scrollbar-rect
-                                :point-in-rect? point-in-rect?}))
+                               (assoc (viewport-deps)
+                                      :scrollbar-rect scrollbar-rect
+                                      :horizontal-scrollbar-rect horizontal-scrollbar-rect
+                                      :point-in-rect? point-in-rect?)))
 
 (defn handle-mouse-dragged
   [state event]
   (events/handle-mouse-dragged state event
-                               {:scaled-content-width scaled-content-width
-                                :scaled-content-height scaled-content-height
-                                :clamp-scroll clamp-scroll
-                                :clamp-scroll-x clamp-scroll-x
-                                :thumb-y->scroll thumb-y->scroll
-                                :thumb-x->scroll thumb-x->scroll}))
+                               (assoc (viewport-deps)
+                                      :thumb-y->scroll thumb-y->scroll
+                                      :thumb-x->scroll thumb-x->scroll)))
 
 (defn- point-in-toolbar?
   [mx my]
   (events/point-in-toolbar? mx my toolbar-height))
 
+(defn- click-deps [state]
+  {:point-in-rect? point-in-rect?
+   :back-button-rect back-button-rect
+   :reanalyze-button-rect (when (:reload-architecture state) reanalyze-button-rect)
+   :reanalyze-state start-reanalyze-state
+   :drilldown-scene drilldown-scene
+   :toolbar-height toolbar-height
+   :hovered-module-position hovered-module-position
+   :view-architecture view-architecture
+   :push-nav-state push-nav-state
+   :open-source-file-window! source-window/open-source-file-window!})
+
 (defn handle-mouse-released
   [state event]
-  (events/handle-mouse-released state event
-                                {:point-in-rect? point-in-rect?
-                                 :back-button-rect back-button-rect
-                                 :reanalyze-button-rect (when (:reload-architecture state) reanalyze-button-rect)
-                                 :reanalyze-state start-reanalyze-state
-                                 :drilldown-scene drilldown-scene
-                                 :toolbar-height toolbar-height
-                                 :hovered-module-position hovered-module-position
-                                 :view-architecture view-architecture
-                                 :push-nav-state push-nav-state
-                                 :open-source-file-window! source-window/open-source-file-window!}))
+  (events/handle-mouse-released state event (click-deps state)))
 
 (defn handle-mouse-clicked
   [state event]
-  (events/handle-mouse-clicked state event
-                               {:point-in-rect? point-in-rect?
-                                :back-button-rect back-button-rect
-                                :reanalyze-button-rect (when (:reload-architecture state) reanalyze-button-rect)
-                                :reanalyze-state start-reanalyze-state
-                                :drilldown-scene drilldown-scene
-                                :toolbar-height toolbar-height
-                                :hovered-module-position hovered-module-position
-                                :view-architecture view-architecture
-                                :push-nav-state push-nav-state
-                                :open-source-file-window! source-window/open-source-file-window!}))
+  (events/handle-mouse-clicked state event (click-deps state)))
 
 (defn view-architecture
   [architecture namespace-path]

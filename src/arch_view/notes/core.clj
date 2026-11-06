@@ -34,6 +34,13 @@
          (sort-by #(if (some #{target} (:targets %)) 0 1))
          vec)))
 
+(defn checked-notes
+  "按目标匹配或按创建时间降序列出解释，并检查每条的源码锚点和目标。"
+  [ws target]
+  (let [all (store/list-notes ws)
+        selected (if target (matching all ws target) (sort-by :createdAt #(compare %2 %1) all))]
+    (mapv #(check ws %) selected)))
+
 (defn fix-moved [note checked]
   (assoc note :anchors (mapv anchor/relocate (:anchors note) (:anchors checked))))
 

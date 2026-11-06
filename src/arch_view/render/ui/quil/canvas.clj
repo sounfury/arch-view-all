@@ -220,7 +220,7 @@
     (q/rect x y width height)))
 
 (defn- draw-zoomed-scene
-  [scene viewport-width dependency-indicators z sx sy {:keys [draw-scene-content]}]
+  [{:keys [scene viewport-width]} dependency-indicators {:keys [z sx sy]} {:keys [draw-scene-content]}]
   (q/background 250 250 250)
   (q/push-matrix)
   (q/scale z)
@@ -229,15 +229,15 @@
   (q/pop-matrix))
 
 (defn- draw-hover-tooltip
-  [hovered hovered-layer hovered-dependency mx my {:keys [draw-tooltip draw-tooltip-lines]}]
+  [{:keys [module layer dependency]} [mx my] {:keys [draw-tooltip draw-tooltip-lines]}]
   (cond
-    hovered (draw-tooltip (:full-name hovered) mx my)
-    (:full-name hovered-layer) (draw-tooltip (:full-name hovered-layer) mx my)
-    hovered-dependency (draw-tooltip-lines (:tooltip-lines hovered-dependency) mx my
-                                           {:scroll-y (:tooltip-scroll hovered-dependency)})))
+    module (draw-tooltip (:full-name module) mx my)
+    (:full-name layer) (draw-tooltip (:full-name layer) mx my)
+    dependency (draw-tooltip-lines (:tooltip-lines dependency) mx my
+                                    {:scroll-y (:tooltip-scroll dependency)})))
 
 (defn- hover-state
-  [interactive-canvas? scene deps world-mx world-my
+  [interactive-canvas? scene deps [world-mx world-my]
    {:keys [hovered-dependency hovered-module-position hovered-layer-label]}]
   {:dependency (when interactive-canvas?
                  (hovered-dependency deps world-mx world-my))
@@ -251,10 +251,8 @@
   (if (:drillable? hovered-module) :cross :arrow))
 
 (defn draw-scene
-  [{:keys [scene declutter-mode scroll-x scroll-y viewport-width zoom] :as state}
-   {:keys [point-in-toolbar? dependency-indicators
-           hovered-dependency hovered-module-position hovered-layer-label
-           draw-scene-content draw-toolbar draw-tooltip draw-tooltip-lines draw-scrollbars]}]
+  [{:keys [scene declutter-mode scroll-x scroll-y zoom] :as state}
+   {:keys [point-in-toolbar? dependency-indicators draw-toolbar draw-scrollbars] :as renderers}]
   (let [z (double (or zoom 1.0))
         mx (double (q/mouse-x))
         my (double (q/mouse-y))
@@ -264,18 +262,12 @@
         world-mx (+ (/ mx z) (/ sx z))
         world-my (+ (/ my z) (/ sy z))
         deps (dependency-indicators scene declutter-mode)
-        {:keys [dependency module layer]}
-        (hover-state interactive-canvas? scene deps world-mx world-my
-                     {:hovered-dependency hovered-dependency
-                      :hovered-module-position hovered-module-position
-                      :hovered-layer-label hovered-layer-label})
+        {:keys [dependency module] :as hovered}
+        (hover-state interactive-canvas? scene deps [world-mx world-my] renderers)
         dependency (when dependency
                      (assoc dependency :tooltip-scroll (double (or (:dependency-tooltip-scroll state) 0.0))))]
     (q/cursor (cursor-style module))
-    (draw-zoomed-scene scene viewport-width deps z sx sy
-                       {:draw-scene-content draw-scene-content})
+    (draw-zoomed-scene state deps {:z z :sx sx :sy sy} renderers)
     (draw-toolbar state)
-    (draw-hover-tooltip module layer dependency mx my
-                        {:draw-tooltip draw-tooltip
-                         :draw-tooltip-lines draw-tooltip-lines})
+    (draw-hover-tooltip (assoc hovered :dependency dependency) [mx my] renderers)
     (draw-scrollbars state)))

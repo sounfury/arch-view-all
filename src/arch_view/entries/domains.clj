@@ -110,20 +110,25 @@
                (into found (mapcat :ids roles))
                (or other? (boolean (some #(= :other (:role %)) roles))))))))
 
+(defn- attribution-result [model]
+  (let [rank (into {} (map-indexed (fn [i id] [id i])) (:order model))
+        domain (fn [id] {:id id :label (get-in model [:subsystems id :label] id)})]
+    (fn [module {:keys [role ids]} {:keys [found other?]}]
+      (cond
+        (= :business role) (mapv domain (sort-by rank ids))
+        (seq found) (mapv domain (sort-by rank found))
+        (or other? (= :other role) (seq (arch/owners model module))) [infra]
+        :else []))))
+
 (defn- architecture-attributor [ws model impl-edges]
   (let [adj (adjacency ws impl-edges)
         classify (classifier model)
-        rank (into {} (map-indexed (fn [i id] [id i])) (:order model))
-        domain (fn [id] {:id id :label (get-in model [:subsystems id :label] id)})]
+        result (attribution-result model)]
     (memoize
      (fn [module]
-       (let [{:keys [role ids]} (classify module)
-             {:keys [found other?]} (when (= :pass role) (walk adj classify module))]
-         (cond
-           (= :business role) (mapv domain (sort-by rank ids))
-           (seq found) (mapv domain (sort-by rank found))
-           (or other? (= :other role) (seq (arch/owners model module))) [infra]
-           :else []))))))
+       (let [classification (classify module)
+             traversal (when (= :pass (:role classification)) (walk adj classify module))]
+         (result module classification traversal))))))
 
 (defn- method-attributor
   "E1 按入口方法的调用边计算归属，最多 3 跳；只有需沿方法调用归类的接入类才强制建立延迟方法图。"
@@ -131,19 +136,14 @@
   (let [classify (classifier model)
         method-classify (memoize #(classify (get-in @graph [:nodes % :module])))
         adj (delay (update-vals (:adj @graph) #(mapv :to %)))
-        rank (into {} (map-indexed (fn [i id] [id i])) (:order model))
-        domain (fn [id] {:id id :label (get-in model [:subsystems id :label] id)})]
+        result (attribution-result model)]
     (fn [entry]
       (let [module (:module entry)
-            {:keys [role ids]} (classify module)
-            root (when (and (= :pass role) (not (:declaration entry)) (get-in entry [:handler :method]))
+            classification (classify module)
+            root (when (and (= :pass (:role classification)) (not (:declaration entry)) (get-in entry [:handler :method]))
                    (root-of entry))
-            {:keys [found other?]} (when root (walk @adj method-classify root))]
-        (cond
-          (= :business role) (mapv domain (sort-by rank ids))
-          (seq found) (mapv domain (sort-by rank found))
-          (or other? (= :other role) (seq (arch/owners model module))) [infra]
-          :else [])))))
+            traversal (when root (walk @adj method-classify root))]
+        (result module classification traversal)))))
 
 (defn- segments [text separator]
   (vec (remove str/blank? (str/split (str text) separator))))

@@ -52,6 +52,10 @@
     (when-not (.isDirectory attrs) (fail! "路径必须是普通目录"))
     attrs))
 
+(defn- create-child-directory! [^Path path ^Path name]
+  (try (Files/createDirectory (.resolve path name) posix-dir-attrs)
+       (catch FileAlreadyExistsException _ nil)))
+
 (deftype StreamDir [^SecureDirectoryStream stream ^Path path]
   Dir
   (dir-path [_] path)
@@ -66,9 +70,7 @@
     (.newByteChannel stream name options attrs))
   (delete-file [_ name] (.deleteFile stream name))
   (delete-directory [_ name] (.deleteDirectory stream name))
-  (create-dir [_ name]
-    (try (Files/createDirectory (.resolve path ^Path name) posix-dir-attrs)
-         (catch FileAlreadyExistsException _ nil)))
+  (create-dir [_ name] (create-child-directory! path name))
   (move-to [_ from dest dest-name]
     (.move stream from ^SecureDirectoryStream (.stream ^StreamDir dest) dest-name))
   (set-permissions [_ perms]
@@ -100,9 +102,7 @@
     (Files/delete (.resolve path ^Path name)))
   (delete-directory [_ name]
     (Files/delete (.resolve path ^Path name)))
-  (create-dir [_ name]
-    (try (Files/createDirectory (.resolve path ^Path name) posix-dir-attrs)
-         (catch FileAlreadyExistsException _ nil)))
+  (create-dir [_ name] (create-child-directory! path name))
   (move-to [_ from dest dest-name]
     (Files/move (.resolve path ^Path from)
                 (.resolve ^Path (dir-path dest) ^Path dest-name)

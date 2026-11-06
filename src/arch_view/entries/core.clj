@@ -8,6 +8,7 @@
             [arch-view.entries.java-calls :as java-calls]
             [arch-view.entries.methods :as methods]
             [arch-view.entries.method-contracts :as contracts]
+            [arch-view.entries.module :as module]
             [arch-view.entries.rules :as rules]
             [arch-view.entries.source-snapshot :as snapshot]
             [arch-view.entries.xml-source :as xml]
@@ -406,17 +407,10 @@
        "(" (str/join "," (or (:signature-params method) (:params method))) ")"
        "|rule:" (when (= :builtin (:origin rule)) "builtin:") (:id rule)))
 
-(defn- type-module
-  "处理类所属的图节点：同一源码文件里名称与顶层类型一致的模块。"
-  [{:keys [file-modules]} type]
-  (let [top (or (last (:outers type)) (:fqn type))
-        modules (map key (get file-modules (:file type)))]
-    (or (first (filter #(or (= top %) (str/ends-with? % (str "." top))) modules))
-        (first (sort modules))
-        top)))
-
 (defn- entry-documentation [{:keys [ws index]} {:keys [type method contract annotation-source]} shown]
-  (let [docs (contracts/describe ws index type method (contracts/inherited-methods index type method) contract)
+  (let [docs (contracts/describe ws index {:type type :method method
+                                         :inherited (contracts/inherited-methods index type method)
+                                         :preferred contract})
         attribute (contracts/valid-doc (get shown "summary"))
         class-doc (when-not (= "ambiguous" (:docStatus docs)) (contracts/valid-doc (:doc type)))
         origin (or annotation-source {:type type :method method})]
@@ -428,33 +422,45 @@
                             (:summary docs) (:docSource docs)
                             class-doc (contracts/source ws type nil "javadoc")))))
 
-(defn- finalize [{:keys [ws] :as ctx} candidate]
-  (for [{:keys [type method kind rule sem declaration] :as candidate} (expand candidate)
-        :let [shown (display-sem sem)
-              text-label (or (declared/fill-template (:label-template candidate) shown) (label candidate shown))
-              path (workspace/relative ws (:file type))
-              module (type-module ctx type)
-              docs (when-not declaration (entry-documentation ctx candidate shown))
-              contract (:contract candidate)
-              contract-source (when contract (contracts/source ws (:type contract) (:method contract) "contract"))]]
+(defn- entry-handler [ctx type method declaration]
+  (if declaration
+    {:type (:fqn type) :method "<unresolved>" :params []}
+    {:type (:fqn type) :method (:name method) :params (:params method)
+     :signature (contracts/parameters (:index ctx) type method)}))
+
+(defn- entry-warnings [candidate docs sem]
+  (vec (distinct (concat (:warnings candidate)
+                         (when (= "ambiguous" (:docStatus docs)) ["ambiguous-doc"])
+                         (unresolved-warnings (mapcat flat-values (vals sem)))))))
+
+(defn- final-entry [{:keys [ws] :as ctx} {:keys [type method kind rule sem declaration] :as candidate}]
+  (let [shown (display-sem sem)
+        text-label (or (declared/fill-template (:label-template candidate) shown) (label candidate shown))
+        path (workspace/relative ws (:file type))
+        module (module/for-type ctx type)
+        docs (when-not declaration (entry-documentation ctx candidate shown))
+        contract (:contract candidate)
+        contract-source (when contract (contracts/source ws (:type contract) (:method contract) "contract"))]
     (cond->
-    (merge docs
-    {:id (entry-id kind text-label shown candidate)
-     :kind (name kind) :label text-label :channel (channel candidate)
-     :module module :buildModule (build-module ws module)
-     :handler (cond-> {:type (:fqn type) :method (if declaration "<unresolved>" (:name method)) :params (if declaration [] (:params method))}
-                (not declaration) (assoc :signature (contracts/parameters (:index ctx) type method)))
-     :anchor {:path path :startLine (:start (or method type)) :endLine (:end (or method type)) :symbol (symbol-name candidate)}
-     :attrs shown :tags (tags sem) :summary (if declaration
-                                             "已声明发布 RPC 服务；入口方法继承自外部依赖，无法定位，需复核。"
-                                             (:summary docs))
-     :rule (if (= :project (:origin rule)) (:id rule) (str "builtin:" (:id rule)))
-     :metaRules (vec (:meta-rules candidate))
-     :sources (cond-> (vec (:sources candidate)) contract-source (conj contract-source))
-     :warnings (vec (distinct (concat (:warnings candidate)
-                                      (when (= "ambiguous" (:docStatus docs)) ["ambiguous-doc"])
-                                      (unresolved-warnings (mapcat flat-values (vals sem))))))})
+      (merge docs
+             {:id (entry-id kind text-label shown candidate)
+              :kind (name kind) :label text-label :channel (channel candidate)
+              :module module :buildModule (build-module ws module)
+              :handler (entry-handler ctx type method declaration)
+              :anchor {:path path :startLine (:start (or method type)) :endLine (:end (or method type))
+                       :symbol (symbol-name candidate)}
+              :attrs shown :tags (tags sem)
+              :summary (if declaration
+                         "已声明发布 RPC 服务；入口方法继承自外部依赖，无法定位，需复核。"
+                         (:summary docs))
+              :rule (if (= :project (:origin rule)) (:id rule) (str "builtin:" (:id rule)))
+              :metaRules (vec (:meta-rules candidate))
+              :sources (cond-> (vec (:sources candidate)) contract-source (conj contract-source))
+              :warnings (entry-warnings candidate docs sem)})
       declaration (assoc :declaration declaration))))
+
+(defn- finalize [ctx candidate]
+  (map #(final-entry ctx %) (expand candidate)))
 
 (defn- impl-edges
   "项目内接口或抽象类只有一个具体实现时，补一条到实现类的边，让归属计算能从接口走到实现。"
@@ -464,7 +470,7 @@
                         (reduce #(update %1 %2 (fnil conj []) type) acc (filter types (supers (:fqn type)))))
                       {} (filter concrete? (vals types)))]
     (for [[super [impl & more]] impls :when (not more)]
-      {:from (type-module ctx (types super)) :to (type-module ctx impl)})))
+      {:from (module/for-type ctx (types super)) :to (module/for-type ctx impl)})))
 
 (defn- merge-entry-contracts [left right]
   (let [candidate (fn [entry] (when-let [source (:contractSource entry)]

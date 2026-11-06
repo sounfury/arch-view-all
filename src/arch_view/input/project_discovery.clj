@@ -21,6 +21,19 @@
   {"clj" :clojure "cljc" :clojure "cljs" :clojure "py" :python "java" :java
    "kt" :kotlin "kts" :kotlin})
 
+(defn- source-counts [root source-paths]
+  (let [roots (if (seq source-paths)
+                (map #(let [file (io/file %)]
+                        (if (.isAbsolute file) file (io/file root %))) source-paths)
+                [root])]
+    (->> roots (mapcat entries)
+         (filter #(.isFile ^java.io.File %))
+         ;; 构建脚本使用 Kotlin 语法，不代表目标项目的源码也是 Kotlin。
+         (remove #(contains? #{"build.gradle.kts" "settings.gradle.kts"} (.getName ^java.io.File %)))
+         (map #(.getCanonicalFile ^java.io.File %)) distinct
+         (keep #(extensions (last (str/split (.getName ^java.io.File %) #"\."))))
+         frequencies)))
+
 (defn detect-language
   "Prefer a unique root build marker; otherwise choose the most common source language.
   Explicit source roots restrict detection and bypass project-wide build markers."
@@ -31,17 +44,7 @@
                        :when (some #(.isFile (io/file root %)) names)] language))]
     (if (= 1 (count marked))
       (first marked)
-      (let [roots (if (seq source-paths)
-                    (map #(let [file (io/file %)]
-                            (if (.isAbsolute file) file (io/file root %))) source-paths)
-                    [root])
-            counts (->> roots (mapcat entries)
-                        (filter #(.isFile ^java.io.File %))
-                        ;; 构建脚本使用 Kotlin 语法，不代表目标项目的源码也是 Kotlin。
-                        (remove #(#{"build.gradle.kts" "settings.gradle.kts"} (.getName ^java.io.File %)))
-                        (map #(.getCanonicalFile ^java.io.File %)) distinct
-                        (keep #(extensions (last (str/split (.getName ^java.io.File %) #"\."))))
-                        frequencies)
+      (let [counts (source-counts root source-paths)
             candidates (if (seq marked) (select-keys counts marked) counts)
             highest (when (seq candidates) (apply max (vals candidates)))
             winners (for [[language n] candidates :when (= highest n)] language)]

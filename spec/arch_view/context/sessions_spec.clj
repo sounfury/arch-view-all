@@ -25,7 +25,7 @@
   ([ws question] (ask! ws "demo.web.model" question {}))
   ([ws question options] (ask! ws "demo.web.model" question options))
   ([ws target question options]
-   (sessions/ask! ws target (str "上下文\n" question) question [] options)))
+   (sessions/ask! ws target {:markdown (str "上下文\n" question) :question question :anchors []} options)))
 
 (describe "ACP 会话管理"
   (with saved (atom {}))

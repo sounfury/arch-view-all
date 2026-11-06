@@ -36,34 +36,45 @@
 (defn parameters [index type method]
   (signature index type method (bounds index type {} (:type-parameters type))))
 
+(defn- parent-types [index [current bindings seen]]
+  (for [{:keys [name args]} (:super-specs current)
+        :let [fqn (:fqn (java/resolve-type index (:ctx current) name))
+              parent (get-in index [:types fqn])]
+        :when (and parent (not (seen fqn)))
+        :let [defaults (bounds index parent {} (:type-parameters parent))
+              arguments (map #(canonical index current bindings %) args)
+              substituted (merge defaults (zipmap (map :name (:type-parameters parent)) arguments))]]
+    [parent substituted (conj seen fqn)]))
+
+(defn- inheritable? [type parent candidate]
+  (and (not (:static? candidate)) (not (:private? candidate)) (not (:final? candidate))
+       (or (:public? candidate) (:protected? candidate) (= (:package type) (:package parent)))))
+
+(defn- matching-methods [index {:keys [type method wanted]} parents]
+  (for [[parent bindings] parents
+        candidate (:methods parent)
+        :when (and (= (:name method) (:name candidate))
+                   (inheritable? type parent candidate)
+                   (= wanted (signature index parent candidate bindings)))]
+    {:type parent :method candidate}))
+
+(defn- collect-inherited [index type method initial]
+  (let [context {:type type :method method :wanted (signature index type method initial)}]
+    (when (every? some? (:wanted context))
+      (loop [pending [[type initial #{}]] found []]
+        (if-let [current (first pending)]
+          (let [parents (parent-types index current)]
+            (recur (into (vec (rest pending)) parents)
+                   (into found (matching-methods index context parents))))
+          (vec (vals (into (array-map)
+                           (map (fn [{:keys [type method] :as match}]
+                                  [(declaration-key type method) match])) found))))))))
+
 (defn inherited-methods
   "源码阶段不建立方法图；按全名、数组、泛型实参替换及可见性匹配，不用同名同参数数猜测重载。"
   [index type method]
   (when-not (or (:static? method) (:private? method))
-    (let [initial (bounds index type {} (:type-parameters type))
-          wanted (signature index type method initial)]
-      (when (every? some? wanted)
-        (loop [pending [[type initial #{}]] found []]
-          (if-let [[current bindings seen] (first pending)]
-            (let [parents (for [{:keys [name args]} (:super-specs current)
-                                :let [fqn (:fqn (java/resolve-type index (:ctx current) name))
-                                      parent (get-in index [:types fqn])]
-                                :when (and parent (not (seen fqn)))
-                                :let [defaults (bounds index parent {} (:type-parameters parent))
-                                      arguments (map #(canonical index current bindings %) args)
-                                      substituted (merge defaults (zipmap (map :name (:type-parameters parent)) arguments))]]
-                            [parent substituted (conj seen fqn)])
-                  matches (for [[parent bindings] parents
-                                candidate (:methods parent)
-                                :when (and (= (:name method) (:name candidate))
-                                           (not (:static? candidate)) (not (:private? candidate)) (not (:final? candidate))
-                                           (or (:public? candidate) (:protected? candidate)
-                                               (= (:package type) (:package parent)))
-                                           (= wanted (signature index parent candidate bindings)))]
-                            {:type parent :method candidate})]
-              (recur (into (vec (rest pending)) parents) (into found matches)))
-            (vec (vals (into (array-map) (map (fn [{:keys [type method] :as match}]
-                                                             [(declaration-key type method) match])) found)))))))))
+    (collect-inherited index type method (bounds index type {} (:type-parameters type)))))
 
 (defn source [ws type method kind]
   {:kind kind :declarationKind (name (:kind type)) :type (:fqn type) :method (:name method)
@@ -78,10 +89,16 @@
                                (contains? (java/all-supers index (get-in % [:type :fqn]))
                                           (get-in candidate [:type :fqn]))) matches)) matches))))
 
+(defn- doc-status [type own texts]
+  (cond own (if (= :interface (:kind type)) "declaration" "implementation")
+        (> (count texts) 1) "ambiguous"
+        (seq texts) "inherited"
+        :else "missing"))
+
 (defn describe
   "实现自身 Javadoc 优先；入口优先使用实际命中的契约，普通方法只接受唯一/一致的最具体说明。
   多个不一致接口说明保留候选并标记 ambiguous，不按父类型名称任取一个。"
-  [ws index type method inherited preferred]
+  [ws index {:keys [type method inherited preferred]}]
   (let [own (valid-doc (:doc method))
         chosen (if preferred
                  (cons preferred (inherited-methods index (:type preferred) (:method preferred))) inherited)
@@ -89,12 +106,12 @@
         texts (distinct (map #(get-in % [:method :doc]) docs))
         sources (mapv #(source ws (:type %) (:method %) "javadoc") docs)
         implementation (source ws type method "javadoc")
-        contract (or preferred (when (= 1 (count docs)) (first docs)))]
+        contract (or preferred (when (= 1 (count docs)) (first docs)))
+        contract-source (when contract (source ws (:type contract) (:method contract) "contract"))]
     {:summary (or own (when (= 1 (count texts)) (first texts)))
      :docSource (if own implementation (when (= 1 (count sources)) (first sources)))
-     :docStatus (cond own (if (= :interface (:kind type)) "declaration" "implementation")
-                      (> (count texts) 1) "ambiguous" (seq texts) "inherited" :else "missing")
+     :docStatus (doc-status type own texts)
      :docCandidates (if own [] sources)
-     :contractSource (when contract (source ws (:type contract) (:method contract) "contract"))
-     :contractAnchor (when contract (:anchor (source ws (:type contract) (:method contract) "contract")))
+     :contractSource contract-source
+     :contractAnchor (:anchor contract-source)
      :implementationAnchor (when-not (:abstract? method) (:anchor implementation))}))

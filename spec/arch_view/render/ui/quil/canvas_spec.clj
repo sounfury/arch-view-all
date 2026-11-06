@@ -273,20 +273,19 @@
 
   (it "draw-hover-tooltip prefers module then layer then dependency"
     (let [calls (atom [])]
-      (#'sut/draw-hover-tooltip {:full-name "module.core"}
-                                {:full-name "layer.name"}
-                                {:tooltip-lines [{:text "a->b"}]}
-                                10.0 20.0
+      (#'sut/draw-hover-tooltip {:module {:full-name "module.core"}
+                                :layer {:full-name "layer.name"}
+                                :dependency {:tooltip-lines [{:text "a->b"}]}}
+                                [10.0 20.0]
                                 {:draw-tooltip (fn [text _ _] (swap! calls conj [:tooltip text]))
                                  :draw-tooltip-lines (fn [lines _ _ & _] (swap! calls conj [:lines lines]))})
-      (#'sut/draw-hover-tooltip nil
-                                {:full-name "layer.name"}
-                                {:tooltip-lines [{:text "a->b"}]}
-                                10.0 20.0
+      (#'sut/draw-hover-tooltip {:layer {:full-name "layer.name"}
+                                :dependency {:tooltip-lines [{:text "a->b"}]}}
+                                [10.0 20.0]
                                 {:draw-tooltip (fn [text _ _] (swap! calls conj [:tooltip text]))
                                  :draw-tooltip-lines (fn [lines _ _ & _] (swap! calls conj [:lines lines]))})
-      (#'sut/draw-hover-tooltip nil nil {:tooltip-lines [{:text "a->b"}]}
-                                10.0 20.0
+      (#'sut/draw-hover-tooltip {:dependency {:tooltip-lines [{:text "a->b"}]}}
+                                [10.0 20.0]
                                 {:draw-tooltip (fn [text _ _] (swap! calls conj [:tooltip text]))
                                  :draw-tooltip-lines (fn [lines _ _ & _] (swap! calls conj [:lines lines]))})
       (should= [[:tooltip "module.core"]

@@ -96,7 +96,7 @@
   (for [method (methods/select-methods ctx type spec {})]
     (assoc base :type type :method method)))
 
-(defn- dispatched [ctx rule {:keys [handlers]} key base dispatcher]
+(defn- dispatched [ctx rule {:keys [handlers key dispatcher]} base]
   (let [matched (filter #(= key (:key %)) handlers)
         warnings (when (> (count matched) 1) ["duplicate-key"])]
     (if (seq matched)
@@ -125,7 +125,7 @@
     (if dispatch
       (let [key (fill-template (get-in rule [:dispatch :key]) fields)]
         {:keys [key]
-         :candidates (dispatched ctx rule dispatch key base bean-type)
+         :candidates (dispatched ctx rule (assoc dispatch :key key :dispatcher bean-type) base)
          :problems problems})
       {:candidates (when bean-type (method-candidates ctx bean-type (:methods rule) base))
        :problems problems})))

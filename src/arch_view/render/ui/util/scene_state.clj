@@ -38,15 +38,18 @@
            :scene scene
            :routed-edges nil)))
 
+(defn view-position
+  [{:keys [scroll-x scroll-y zoom zoom-stack]}]
+  {:scroll-x (double (or scroll-x 0.0))
+   :scroll-y (double (or scroll-y 0.0))
+   :zoom (double (or zoom 1.0))
+   :zoom-stack (vec (or zoom-stack []))})
+
 (defn push-nav-state
-  [{:keys [namespace-path scroll-x scroll-y nav-stack scene zoom zoom-stack] :as state}]
-  (assoc state :nav-stack (conj (vec (or nav-stack []))
-                                {:path (vec (or namespace-path []))
-                                 :scene scene
-                                 :scroll-x (double (or scroll-x 0.0))
-                                 :scroll-y (double (or scroll-y 0.0))
-                                 :zoom (double (or zoom 1.0))
-                                 :zoom-stack (vec (or zoom-stack []))})))
+  [{:keys [namespace-path scene] :as state}]
+  (let [saved (merge (view-position state)
+                     {:path (vec (or namespace-path [])) :scene scene})]
+    (update state :nav-stack #(conj (vec (or % [])) saved))))
 
 (defn initial-scene-for-show
   [scene architecture {:keys [view-architecture build-scene attach-drillable-markers]}]

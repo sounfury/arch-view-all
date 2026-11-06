@@ -6,19 +6,14 @@
             [arch-view.notes.core :as notes]
             [arch-view.notes.store :as store]))
 
-(declare ^:private list-notes ^:private save-note!)
+(declare ^:private save-note!)
 
 (def routes
-  {["GET" "/api/notes"] (fn [ws params] (list-notes ws (get params "target")))
+  {["GET" "/api/notes"] (fn [ws params] (notes/checked-notes ws (get params "target")))
    ["GET" "/api/note"] (fn [ws params] (notes/check ws (store/read-note ws (get params "id"))))
    ["POST" "/api/note"] (fn [ws params] (save-note! ws params))})
 
 ;; ===== 私有方法 =====
-
-(defn- list-notes [ws target]
-  (let [all (store/list-notes ws)
-        selected (if target (notes/matching all ws target) (sort-by :createdAt #(compare %2 %1) all))]
-    (mapv #(notes/check ws %) selected)))
 
 (defn- save-note! [ws params]
   (let [draft (try (support/read-json-text (get params "body" ""))

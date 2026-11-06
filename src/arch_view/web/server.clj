@@ -44,6 +44,22 @@
     {:port port :requested-port requested-port :url (str "http://127.0.0.1:" port)
      :stop (fn [] (.stop server 0) (sessions/close! manager) (.shutdownNow executor))}))
 
+(defn- open-browser! [url]
+  (try
+    (if (and (Desktop/isDesktopSupported)
+             (.isSupported (Desktop/getDesktop) java.awt.Desktop$Action/BROWSE))
+      (.browse (Desktop/getDesktop) (URI. url))
+      (println "当前环境不支持自动打开浏览器，请打开上方地址。"))
+    (catch Exception _ (println "请在浏览器中打开上方地址。"))))
+
+(defn- report-ready! [app]
+  (when (and (not= (:requested-port app) (:port app)) (pos? (:requested-port app)))
+    (println (str "默认端口 " (:requested-port app) " 已被占用，已改用空闲端口 " (:port app) "。")))
+  (println (str "架构 Web UI: " (:url app)))
+  (println (str "服务已就绪；进程号（PID）：" (.pid (java.lang.ProcessHandle/current))))
+  (println "网页服务会持续占用前台。按 Ctrl+C 停止；自动化调用请使用持久或后台进程。")
+  (flush))
+
 (defn -main [& args]
   (try
     (let [opts (parse-options args)]
@@ -57,19 +73,8 @@
               _ (flush)
               app (start! architecture (:project-path opts) opts (when-not (:in-edn opts) load!))]
           (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable (:stop app)))
-          (when (not= (:requested-port app) (:port app))
-            (when (pos? (:requested-port app))
-              (println (str "默认端口 " (:requested-port app) " 已被占用，已改用空闲端口 " (:port app) "。"))))
-          (println (str "架构 Web UI: " (:url app)))
-          (println (str "服务已就绪；进程号（PID）：" (.pid (java.lang.ProcessHandle/current))))
-          (println "网页服务会持续占用前台。按 Ctrl+C 停止；自动化调用请使用持久或后台进程。")
-          (flush)
-          (when-not (:no-browser opts)
-            (try
-              (if (and (Desktop/isDesktopSupported) (.isSupported (Desktop/getDesktop) java.awt.Desktop$Action/BROWSE))
-                (.browse (Desktop/getDesktop) (URI. (:url app)))
-                (println "当前环境不支持自动打开浏览器，请打开上方地址。"))
-              (catch Exception _ (println "请在浏览器中打开上方地址。")))))))
+          (report-ready! app)
+          (when-not (:no-browser opts) (open-browser! (:url app))))))
     (catch Exception ex
       (binding [*out* *err*] (println (.getMessage ex)))
       (System/exit 1))))

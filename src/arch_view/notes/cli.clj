@@ -10,7 +10,7 @@
 
 (declare ^:private usage ^:private execute! ^:private validate-command!
          ^:private save! ^:private list! ^:private show! ^:private check!
-         ^:private checked-notes ^:private note-line ^:private list-markdown
+         ^:private note-line ^:private list-markdown
          ^:private show-markdown ^:private anchor-line ^:private strict-failure?)
 
 (defn run! [args]
@@ -55,13 +55,8 @@
         saved (store/write-note! ws note (:force options))]
     (support/emit! options (notes/check ws saved) show-markdown)))
 
-(defn- checked-notes [ws target]
-  (let [all (store/list-notes ws)
-        selected (if target (notes/matching all ws target) (sort-by :createdAt #(compare %2 %1) all))]
-    (mapv #(notes/check ws %) selected)))
-
 (defn- list! [ws options]
-  (support/emit! options (checked-notes ws (:target options)) list-markdown))
+  (support/emit! options (notes/checked-notes ws (:target options)) list-markdown))
 
 (defn- show! [ws options id]
   (support/emit! options (notes/check ws (store/read-note ws id)) show-markdown))

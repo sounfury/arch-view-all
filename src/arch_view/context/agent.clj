@@ -34,7 +34,8 @@
                         vec)
            started (System/nanoTime)
            result (if (= "pi-acp" provider)
-                    (sessions/ask! ws (:target context) (:markdown context) question anchors options)
+                    (sessions/ask! ws (:target context)
+                                   {:markdown (:markdown context) :question question :anchors anchors} options)
                     (sandboxed-answer! ws command (:markdown context) timeout))]
        (assoc result :command command :anchors anchors
               :elapsedMs (quot (- (System/nanoTime) started) 1000000))))))

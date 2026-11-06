@@ -4,6 +4,7 @@
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.quil.events
   (:require [arch-view.render.ui.util.events-logic :as logic]
+            [arch-view.render.ui.util.scene-state :as scene-state]
             [quil.core :as q]))
 
 (defn plus-key?
@@ -194,18 +195,15 @@
   [{:keys [nav-stack] :as state} {:keys [drilldown-scene]}]
   (let [stack (vec (or nav-stack []))]
     (if (seq stack)
-      (let [{:keys [path scene scroll-x scroll-y zoom zoom-stack]} (peek stack)
+      (let [{:keys [path scene scroll-x scroll-y] :as saved} (peek stack)
             popped-stack (pop stack)]
         (if scene
-          (assoc state
-                 :nav-stack popped-stack
-                 :namespace-path (vec (or path []))
-                 :scene scene
-                 :scroll-x (double (or scroll-x 0.0))
-                 :scroll-y (double (or scroll-y 0.0))
-                 :zoom (double (or zoom 1.0))
-                 :zoom-stack (vec (or zoom-stack []))
-                 :routed-edges nil)
+          (merge state
+                 (scene-state/view-position saved)
+                 {:nav-stack popped-stack
+                  :namespace-path (vec (or path []))
+                  :scene scene
+                  :routed-edges nil})
           (-> state
               (assoc :nav-stack popped-stack)
               (drilldown-scene (vec (or path [])) scroll-x scroll-y))))
@@ -344,12 +342,9 @@
 
 (defn handle-mouse-wheel
   [state event
-   {:keys [scaled-content-width scaled-content-height clamp-scroll clamp-scroll-x
-           point-in-toolbar? dependency-indicators hovered-dependency]}]
-  (let [state (sync-viewport-size state {:scaled-content-width scaled-content-width
-                                         :scaled-content-height scaled-content-height
-                                         :clamp-scroll clamp-scroll
-                                         :clamp-scroll-x clamp-scroll-x})
+   {:keys [scaled-content-height clamp-scroll
+           point-in-toolbar? dependency-indicators hovered-dependency] :as deps}]
+  (let [state (sync-viewport-size state deps)
         dependency (when (and point-in-toolbar? dependency-indicators hovered-dependency)
                      (hovered-dependency-at-event state event
                                                  {:point-in-toolbar? point-in-toolbar?
@@ -381,12 +376,9 @@
 
 (defn handle-mouse-pressed
   [state event
-   {:keys [scaled-content-width scaled-content-height clamp-scroll clamp-scroll-x
-           scrollbar-rect horizontal-scrollbar-rect point-in-rect?]}]
-  (let [state (sync-viewport-size state {:scaled-content-width scaled-content-width
-                                         :scaled-content-height scaled-content-height
-                                         :clamp-scroll clamp-scroll
-                                         :clamp-scroll-x clamp-scroll-x})
+   {:keys [scaled-content-width scaled-content-height
+           scrollbar-rect horizontal-scrollbar-rect point-in-rect?] :as deps}]
+  (let [state (sync-viewport-size state deps)
         content-height (scaled-content-height (:scene state) (or (:zoom state) 1.0))
         content-width (scaled-content-width (:scene state) (or (:zoom state) 1.0))
         horizontal-visible? (> content-width (:viewport-width state))
@@ -411,12 +403,8 @@
 
 (defn handle-mouse-dragged
   [{:keys [dragging-scrollbar? drag-offset] :as state} event
-   {:keys [scaled-content-width scaled-content-height clamp-scroll clamp-scroll-x
-           thumb-y->scroll thumb-x->scroll]}]
-  (let [state (sync-viewport-size state {:scaled-content-width scaled-content-width
-                                         :scaled-content-height scaled-content-height
-                                         :clamp-scroll clamp-scroll
-                                         :clamp-scroll-x clamp-scroll-x})]
+   {:keys [scaled-content-width scaled-content-height thumb-y->scroll thumb-x->scroll] :as deps}]
+  (let [state (sync-viewport-size state deps)]
     (case dragging-scrollbar?
       :vertical
       (let [content-height (scaled-content-height (:scene state) (or (:zoom state) 1.0))

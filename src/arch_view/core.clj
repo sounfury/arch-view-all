@@ -125,6 +125,25 @@
   (shutdown-agents)
   (System/exit 0))
 
+(defn- prepare-desktop! [opts]
+  (when (and (not (:no-gui opts)) (java.awt.GraphicsEnvironment/isHeadless))
+    ;; 无图形界面时先拦下，免得分析完才失败且退出码仍为 0。
+    (throw (ex-info (str "当前环境没有图形界面，无法打开桌面窗口。"
+                         "请改用 arch-view serve（远程服务器可通过 SSH 端口转发在本机浏览器查看），"
+                         "或用 arch-view scan 只做分析与导出。") {})))
+  (when-let [scale (:ui-scale opts)] (System/setProperty "sun.java2d.uiScale" scale)))
+
+(defn- report-architecture! [{:keys [graph] :as architecture} out]
+  (println "Architecture loaded")
+  (when-let [language (get-in architecture [:guidance :language])]
+    (println "Language:" (name language))
+    (println "Source paths:" (str/join ", " (get-in architecture [:guidance :source-paths]))))
+  (println "Nodes:" (count (:nodes graph)))
+  (println "Edges:" (count (:edges graph)))
+  (when out
+    (spit out (pr-str architecture))
+    (println (str "架构数据已导出：" (.getCanonicalPath (io/file out))))))
+
 (defn -main [& args]
   (let [cli (parse-args args)
         {:keys [project-path in-edn no-gui out help] :as opts}
@@ -132,26 +151,13 @@
             (parse-args args (config/defaults (:env-file cli) (into {} (System/getenv)))))]
     (if help
       (println (usage-summary))
-      (let [_ (when (and (not no-gui) (java.awt.GraphicsEnvironment/isHeadless))
-                ;; 无图形界面时先拦下，免得分析完才失败且退出码仍为 0。
-                (throw (ex-info (str "当前环境没有图形界面，无法打开桌面窗口。"
-                                     "请改用 arch-view serve（远程服务器可通过 SSH 端口转发在本机浏览器查看），"
-                                     "或用 arch-view scan 只做分析与导出。") {})))
-            _ (when-let [scale (:ui-scale opts)] (System/setProperty "sun.java2d.uiScale" scale))
+      (let [_ (prepare-desktop! opts)
             architecture (if in-edn
                            (load-architecture-edn in-edn)
                            (load-architecture project-path opts))
             source-label (or in-edn project-path)
-            {:keys [graph scene]} architecture]
-        (println "Architecture loaded")
-        (when-let [language (get-in architecture [:guidance :language])]
-          (println "Language:" (name language))
-          (println "Source paths:" (str/join ", " (get-in architecture [:guidance :source-paths]))))
-        (println "Nodes:" (count (:nodes graph)))
-        (println "Edges:" (count (:edges graph)))
-        (when out
-          (spit out (pr-str architecture))
-          (println (str "架构数据已导出：" (.getCanonicalPath (io/file out)))))
+            {:keys [scene]} architecture]
+        (report-architecture! architecture out)
         (when-not no-gui
           (-> (render/show! scene {:title (str "architecture-viewer: " (str/trim source-label))
                                    :architecture architecture

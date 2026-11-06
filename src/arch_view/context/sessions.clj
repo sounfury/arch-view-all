@@ -103,24 +103,30 @@
         (try ((:cleanup isolation)) (catch Exception clean (.addSuppressed ex clean)))
         (throw ex)))))
 
+(defn- session-entry!
+  "调用方持有 manager 锁；统一获取会话并检查服务、项目和目标。"
+  [manager ws target session-id]
+  (when @(:closed manager)
+    (throw (ex-info "AI 服务正在关闭" {:status 503})))
+  (let [id (or session-id (str (UUID/randomUUID)))
+        entry (or (get @(:sessions manager) id)
+                  (do (make-room! manager)
+                      (let [entry (open-entry! ws target id (some? session-id))]
+                        (swap! (:sessions manager) assoc id entry)
+                        entry)))]
+    (when-not (= (:root entry) (str (:root ws)))
+      (throw (ex-info "会话不属于当前项目" {:status 404})))
+    (check-target! target @(:data entry))
+    [id entry]))
+
 (defn- acquire-entry! [manager ws target session-id]
   (locking (:lock manager)
-    (when @(:closed manager)
-      (throw (ex-info "AI 服务正在关闭" {:status 503})))
-    (let [id (or session-id (str (UUID/randomUUID)))
-          entry (or (get @(:sessions manager) id)
-                    (do (make-room! manager)
-                        (let [entry (open-entry! ws target id (some? session-id))]
-                          (swap! (:sessions manager) assoc id entry)
-                          entry)))]
-      (when-not (= (:root entry) (str (:root ws)))
-        (throw (ex-info "会话不属于当前项目" {:status 404})))
-      (check-target! target @(:data entry))
+    (let [[id entry] (session-entry! manager ws target session-id)]
       (when-not (.compareAndSet ^AtomicBoolean (:busy entry) false true)
         (throw (ex-info "这个 AI 会话正在作答，请等待完成或先取消" {:status 409})))
       [id entry])))
 
-(defn- complete! [ws id entry question anchors result]
+(defn- complete! [ws id entry {:keys [question anchors]} result]
   (let [turn {:question question :answer (:answer result) :anchors anchors}
         data (-> @(:data entry)
                  (update :history conj turn)
@@ -131,13 +137,13 @@
                    :configOptions (acp/config-options (:connection entry))
                    :sandbox {:kind (get-in entry [:isolation :kind]) :readOnly true}})))
 
-(defn- ask-with-manager! [manager ws target markdown question anchors options]
+(defn- ask-with-manager! [manager ws target {:keys [markdown] :as request} options]
   (let [[id entry] (acquire-entry! manager ws target (:session-id options))
         timeout (:timeout (provider/configuration ws))]
     (reset! (:callback entry) (:on-update options))
     (try
       (when-let [f (:on-session options)] (f {:sessionId id}))
-      (complete! ws id entry question anchors
+      (complete! ws id entry request
                  (acp/prompt! (:connection entry) (:agentSessionId @(:data entry)) markdown timeout))
       (catch Exception ex
         ;; 超时或连接损坏后只保留上个已保存轮次，恢复时从原生快照重新连接。
@@ -149,12 +155,13 @@
         (.set ^AtomicBoolean (:busy entry) false)))))
 
 (defn ask!
-  "续聊只使用服务端保存的会话；请求方不能指定启动命令、文件路径或模型历史。"
-  [ws target markdown question anchors options]
+  "续聊只使用服务端保存的会话；request 含 :markdown、:question 和 :anchors。
+  请求方不能指定启动命令、文件路径或模型历史。"
+  [ws target request options]
   (if-let [manager (:agent-sessions ws)]
-    (ask-with-manager! manager ws target markdown question anchors options)
+    (ask-with-manager! manager ws target request options)
     (let [manager (create-manager)]
-      (try (ask-with-manager! manager ws target markdown question anchors options)
+      (try (ask-with-manager! manager ws target request options)
            (finally (close! manager))))))
 
 (defn- config-payload [id entry]
@@ -166,16 +173,7 @@
   (let [manager (:agent-sessions ws)]
     (when-not manager (throw (ex-info "当前未启用 ACP 会话" {:status 409})))
     (locking (:lock manager)
-      (when @(:closed manager) (throw (ex-info "AI 服务正在关闭" {:status 503})))
-      (let [id (or session-id (str (UUID/randomUUID)))
-            entry (or (get @(:sessions manager) id)
-                      (do (make-room! manager)
-                          (let [entry (open-entry! ws target id (some? session-id))]
-                            (swap! (:sessions manager) assoc id entry)
-                            entry)))]
-        (when-not (= (:root entry) (str (:root ws)))
-          (throw (ex-info "会话不属于当前项目" {:status 404})))
-        (check-target! target @(:data entry))
+      (let [[id entry] (session-entry! manager ws target session-id)]
         (config-payload id entry)))))
 
 (defn set-config!

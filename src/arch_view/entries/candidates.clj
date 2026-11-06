@@ -2,9 +2,9 @@
 ;; 核心入口：候选统计（candidates）；未归类入口统计（unclassified），供 AI 起草 domains。
 
 (ns arch-view.entries.candidates
-  (:require [arch-view.entries.domains :as domains]
-            [arch-view.entries.java-source :as java]
-            [arch-view.entries.xml-source :as xml]
+  (:require [arch-view.entries [domains :as domains]
+                               [java-source :as java]
+                               [xml-source :as xml]]
             [arch-view.workspace :as workspace]
             [clojure.string :as str]))
 

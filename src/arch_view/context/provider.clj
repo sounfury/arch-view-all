@@ -9,6 +9,13 @@
            [java.nio.file Files LinkOption OpenOption Path StandardOpenOption]
            [java.nio.file.attribute FileAttribute PosixFilePermissions]))
 
+(defn- command-arguments [quoted? active? token result]
+  (when quoted? (throw (ex-info "本机 AI 命令的双引号未闭合" {:status 400})))
+  (let [args (if active? (conj result token) result)]
+    (when (str/blank? (first args))
+      (throw (ex-info "本机 AI 命令缺少可执行文件" {:status 400})))
+    args))
+
 (defn parse-command
   "按空白和双引号拆成 argv；保留普通反斜杠，不经过 shell。"
   [command]
@@ -19,12 +26,7 @@
         (and (Character/isWhitespace ^char ch) (not quoted?))
         (recur (next chars) false false "" (if active? (conj result token) result))
         :else (recur (next chars) quoted? true (str token ch) result))
-      (do
-        (when quoted? (throw (ex-info "本机 AI 命令的双引号未闭合" {:status 400})))
-        (let [args (if active? (conj result token) result)]
-          (when (str/blank? (first args))
-            (throw (ex-info "本机 AI 命令缺少可执行文件" {:status 400})))
-          args)))))
+      (command-arguments quoted? active? token result))))
 
 (defn- detected-provider [command]
   (let [basename (-> command parse-command first (str/replace "\\" "/") (str/split #"/") last str/lower-case)]

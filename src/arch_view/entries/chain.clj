@@ -42,7 +42,8 @@
         {:keys [graph root]} (dispatch-root graph entry handler)
         all (traverse graph root Integer/MAX_VALUE Integer/MAX_VALUE)
         visible (traverse graph root depth limit)]
-    (with-meta (result-data graph entry root visible all depth limit) {:fingerprints (:fingerprints graph)})))
+    (with-meta (result-data graph entry {:root root :visible visible :all all :depth depth :limit limit})
+      {:fingerprints (:fingerprints graph)})))
 
 ;; ===== 私有方法 =====
 
@@ -62,27 +63,35 @@
   (some #(not-empty (get-in graph [:method-index [% method arity]]))
         (cons receiver (sort ((:supers ctx) receiver)))))
 
-(defn- resolved-targets [ctx graph {:keys [target receiver exact] :as call}]
+(defn- applicable-implementation? [ctx graph receiver target id]
+  ;; 模板形参的 CHA 不能把全仓匿名实现混进每个入口；源码回调参数已有显式不确定边。
+  (and (or (not (get-in ctx [:index :types (get-in graph [:nodes id :type]) :local?]))
+           (get-in ctx [:index :types receiver :local?]))
+       (some #(inherited? ctx % receiver)
+             (or (seq (get-in graph [:implementationOwners [target id]]))
+                 [(get-in graph [:nodes id :type])]))))
+
+(defn- implementation-targets [ctx graph node {:keys [target receiver exact]}]
+  (if (and node (:virtual node) (not exact))
+    (filter #(applicable-implementation? ctx graph receiver target %)
+            (get-in graph [:implementations target]))
+    (when node [target])))
+
+(defn- target-reasons [call node candidate chosen]
+  (clojure.core/remove nil?
+                       [(:reason call)
+                        (when-not node "按声明类型匹配，调用符号未完整解析")
+                        (when (> (count chosen) 1) (str (if node "多实现" "未解析重载") "（" (count chosen) "）"))
+                        (when (:abstract candidate) "未找到具体实现")
+                        (when (some async-annotations (:annotations candidate)) "@Async 异步调用")]))
+
+(defn- resolved-targets [ctx graph {:keys [target receiver] :as call}]
   (let [node (get-in graph [:nodes target])
-        resolved (if (and node (:virtual node) (not exact))
-                   (filter (fn [id]
-                             ;; 模板形参的 CHA 不能把全仓匿名实现混进每个入口；源码回调参数已有显式不确定边。
-                             (and (or (not (get-in ctx [:index :types (get-in graph [:nodes id :type]) :local?]))
-                                      (get-in ctx [:index :types receiver :local?]))
-                                  (some #(inherited? ctx % receiver)
-                                        (or (seq (get-in graph [:implementationOwners [target id]]))
-                                            [(get-in graph [:nodes id :type])]))))
-                           (get-in graph [:implementations target]))
-                   (when node [target]))
+        resolved (implementation-targets ctx graph node call)
         chosen (or (seq resolved) (when node [target])
                    ((:fallback-targets ctx) receiver (:method call) (count (:args call))))]
-    (for [id chosen :let [candidate (get-in graph [:nodes id])
-                          reasons (clojure.core/remove nil?
-                                                       [(:reason call)
-                                                        (when-not node "按声明类型匹配，调用符号未完整解析")
-                                                        (when (> (count chosen) 1) (str (if node "多实现" "未解析重载") "（" (count chosen) "）"))
-                                                        (when (:abstract candidate) "未找到具体实现")
-                                                        (when (some async-annotations (:annotations candidate)) "@Async 异步调用")])]]
+    (for [id chosen
+          :let [reasons (target-reasons call node (get-in graph [:nodes id]) chosen)]]
       {:from (:from call) :to id :anchor (:anchor call) :call (:written call)
        :style (if (seq reasons) "dashed" "solid") :reason (str/join "；" reasons)})))
 
@@ -176,29 +185,36 @@
         (recur (into (pop queue) (map #(vector % (inc depth)) nexts))
                (into seen nexts) (conj ordered {:id id :depth depth}))))))
 
+(defn- entry-contract-fields [node entry]
+  (let [unambiguous? (not= "ambiguous" (:contractStatus entry))]
+    {:contractAnchor (when unambiguous? (or (:contractAnchor entry) (:contractAnchor node)))
+     :contractSource (when unambiguous? (or (:contractSource entry) (:contractSource node)))}))
+
+(defn- entry-doc-fields [node entry]
+  (if (= "implementation" (:docStatus node))
+    {:summary (:summary node) :methodSummary (:summary node)
+     :docSource (:docSource node) :methodDocSource (:docSource node) :docStatus "implementation"}
+    {:summary (or (:summary entry) (:summary node))
+     :methodSummary (or (:methodSummary entry) (:summary node))
+     :docSource (if (:summary entry) (:docSource entry) (:docSource node))
+     :methodDocSource (or (:methodDocSource entry) (:docSource node))
+     :docStatus (if (or (:contractAnchor entry) (:contractCandidates entry) (:summary entry))
+                  (:docStatus entry) (:docStatus node))}))
+
 (defn- entry-node
   "仅修饰当前切片中的处理节点，不改写缓存的共享方法图或其它入口。"
   [node entry]
-  (let [own? (= "implementation" (:docStatus node))
-        entry-summary (:summary entry)]
-    (merge node
-           (select-keys entry [:businessName :description :contractStatus :contractCandidates])
-           {:contractAnchor (when-not (= "ambiguous" (:contractStatus entry))
-                              (or (:contractAnchor entry) (:contractAnchor node)))
-            :contractSource (when-not (= "ambiguous" (:contractStatus entry))
-                              (or (:contractSource entry) (:contractSource node)))
-            :docCandidates (if (or (:contractAnchor entry) (:contractCandidates entry)) (:docCandidates entry) (:docCandidates node))
-            :summary (if own? (:summary node) (or entry-summary (:summary node)))
-            :methodSummary (if own? (:summary node) (or (:methodSummary entry) (:summary node)))
-            :entrySummary entry-summary :operation (get-in entry [:attrs "operation"])
-            :docSource (cond own? (:docSource node) entry-summary (:docSource entry) :else (:docSource node))
-            :methodDocSource (if own? (:docSource node) (or (:methodDocSource entry) (:docSource node)))
-            :docStatus (if own? "implementation"
-                           (if (or (:contractAnchor entry) (:contractCandidates entry) entry-summary) (:docStatus entry) (:docStatus node)))
-            :attrs (merge (:attrs node) (:attrs entry))
-            :sources (vec (distinct (concat (:sources node) (:sources entry))))})))
+  (merge node
+         (select-keys entry [:businessName :description :contractStatus :contractCandidates])
+         (entry-contract-fields node entry)
+         (entry-doc-fields node entry)
+         {:docCandidates (if (or (:contractAnchor entry) (:contractCandidates entry))
+                           (:docCandidates entry) (:docCandidates node))
+          :entrySummary (:summary entry) :operation (get-in entry [:attrs "operation"])
+          :attrs (merge (:attrs node) (:attrs entry))
+          :sources (vec (distinct (concat (:sources node) (:sources entry))))}))
 
-(defn- result-data [graph entry root visible all depth limit]
+(defn- result-data [graph entry {:keys [root visible all depth limit]}]
   (let [handler (root-of graph entry)
         ids (set (map :id visible))
         edges (vec (filter #(and (ids (:from %)) (ids (:to %))) (:edges graph)))

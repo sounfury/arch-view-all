@@ -156,7 +156,8 @@ def generate(policy):
         "mode": "mild", "noGitignore": True, "maxSize": "1gb",
         "reporters": ["console", "threshold"], "absolute": False, "failOnEmpty": True,
         "ignore": ["**/.git/**", "**/node_modules/**", "**/build/**",
-                   "**/.gradle/**", "**/target/**", "**/__pycache__/**"],
+                   "**/.gradle/**", "**/target/**", "**/__pycache__/**",
+                   "**/assets/**"],
     }, ensure_ascii=False, indent=2) + "\n"
     return files
 

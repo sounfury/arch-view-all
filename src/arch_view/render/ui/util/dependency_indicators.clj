@@ -98,7 +98,7 @@
     (q/triangle x1 y1 x2 y2 x3 y3)))
 
 (defn- point->segment-distance
-  [px py x1 y1 x2 y2]
+  [[px py] [x1 y1] [x2 y2]]
   (let [dx (- x2 x1)
         dy (- y2 y1)
         len2 (+ (* dx dx) (* dy dy))]
@@ -140,8 +140,8 @@
                 (let [inside? (point-in-triangle? mx my triangle)
                       edges (map vector triangle (concat (rest triangle) [(first triangle)]))
                       nearest-edge (reduce min Double/MAX_VALUE
-                                           (map (fn [[[x1 y1] [x2 y2]]]
-                                                  (point->segment-distance mx my x1 y1 x2 y2))
+                                           (map (fn [[start end]]
+                                                  (point->segment-distance [mx my] start end))
                                                 edges))]
                   (when (or inside? (<= nearest-edge dependency-triangle-hover-tolerance))
                     (assoc indicator :hover-distance nearest-edge)))))
